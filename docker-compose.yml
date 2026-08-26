@@ -67,6 +67,10 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     restart: unless-stopped
+    # PID 1 real (tini) para que Chromium (y cualquier señal de Xvfb) se manejen
+    # bien sin un init de por medio -- sin esto Xvfb puede quedar arriba con
+    # zombies sin recolectar.
+    init: true
     # Mismo problema de seccomp vs. kernel de RHEL7 que en "db" (ver comentario ahi):
     # el sandbox propio de Chromium tambien depende de syscalls (clone/unshare/ptrace)
     # que el perfil builtin puede bloquear en este host.

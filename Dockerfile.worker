@@ -18,5 +18,8 @@ RUN pip install --no-cache-dir -r requirements-api.txt \
 COPY api ./api
 COPY scraper ./scraper
 COPY worker ./worker
+COPY worker-entrypoint.sh /worker-entrypoint.sh
+RUN chmod +x /worker-entrypoint.sh
 
-CMD ["xvfb-run", "-a", "--server-args=-screen 0 1280x1024x24", "python", "-m", "worker.main"]
+ENTRYPOINT ["/worker-entrypoint.sh"]
+CMD ["python", "-m", "worker.main"]

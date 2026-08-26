@@ -199,6 +199,30 @@ habitual `proxy_pass http://127.0.0.1:8000;` + `certbot --nginx`.
   reintenta solo. Si persiste, revisar `docker compose logs worker` para el
   error puntual.
 
+- **El worker queda "corriendo" pero nunca procesa nada, sin ningun log** (se
+  confirma con `docker compose exec worker ps aux`: solo aparecen `xvfb-run` y
+  `Xvfb`, ni rastro de `python`): `xvfb-run` sincroniza con Xvfb usando la señal
+  `SIGUSR1`, y ese mecanismo se cuelga en silencio dentro de Docker cuando no hay
+  un init real como PID 1 -- Xvfb queda arriba pero el comando que le sigue nunca
+  se llega a ejecutar. El `Dockerfile.worker` y el `docker-compose.yml` ya traen
+  el fix (arranque manual de Xvfb via `worker-entrypoint.sh` + `init: true` en el
+  servicio `worker` para tener un init real). Si ya tenias el stack levantado con
+  la version vieja, hay que reconstruir la imagen:
+
+  ```bash
+  docker compose up -d --build worker
+  docker compose exec worker ps aux   # debe verse Xvfb + python (+ chromium cuando tome un job)
+  ```
+
+- **El worker llega a correr pero el sitio del PJUD devuelve `403 Forbidden`**
+  (se puede probar con
+  `docker compose exec worker curl -Iv https://oficinajudicialvirtual.pjud.cl/includes/sesion-consultaunificada.php`):
+  el sitio esta bloqueando la IP del VPS (WAF tipo BigIP/TrafficServer). No es un
+  problema de la configuracion Docker -- hay que revisar si la IP del VPS esta en
+  alguna lista de bloqueo del PJUD (comun con rangos de IP de proveedores cloud/
+  datacenter) y evaluar si hace falta salir por una IP residencial/con mejor
+  reputacion.
+
 - **Cambiaste la version de `playwright` en `requirements-api.txt`:** actualizar
   el tag de la imagen base en `Dockerfile.worker`
   (`mcr.microsoft.com/playwright/python:vX.Y.Z-jammy`) para que coincida, si no
