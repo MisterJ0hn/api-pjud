@@ -151,13 +151,17 @@ habitual `proxy_pass http://127.0.0.1:8000;` + `certbot --nginx`.
 ## 8. Troubleshooting
 
 - **`db` falla en bucle con `could not write to file "postmaster.pid": Operation not
-  permitted` o `.../pg_wal/xlogtemp...: Operation not permitted`:** el hipervisor
-  del VPS (comun en Xen con syscalls restringidas) bloquea `posix_fallocate()`,
-  que Postgres usa para preasignar el primer segmento de WAL durante `initdb`. El
-  `docker-compose.yml` ya trae el workaround
-  (`POSTGRES_INITDB_ARGS: --set=wal_init_zero=off --set=wal_recycle=off`). Si te
-  encontraste con este error antes de tener ese cambio, hay que limpiar el volumen
-  a medio inicializar y volver a levantar:
+  permitted` o `.../pg_wal/xlogtemp...: Operation not permitted`:** pasa en VPS con
+  kernel de CentOS/RHEL 7 (`3.10.0-...el7`, verificar con `docker info | grep
+  "Kernel Version"`). Ese kernel trae miles de backports de Red Hat con numeracion
+  de syscalls no estandar; el perfil `seccomp: builtin` de Docker filtra por numero
+  asumiendo un kernel upstream normal, y termina bloqueando syscalls que Postgres
+  necesita durante `initdb` (se ve como `Operation not permitted` en vez de un
+  error de permisos real -- se confirma probando ownership/fallocate/truncate/flock
+  a mano, que funcionan bien, mientras que Postgres sigue fallando). El
+  `docker-compose.yml` ya trae el workaround (`security_opt: seccomp:unconfined`
+  en `db` y `worker`). Si te encontraste con este error antes de tener ese cambio,
+  hay que limpiar el volumen a medio inicializar y volver a levantar:
 
   ```bash
   docker compose down -v   # borra tambien db_data -- no hay datos que rescatar, initdb nunca termino

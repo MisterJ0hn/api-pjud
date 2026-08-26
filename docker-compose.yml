@@ -12,13 +12,18 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # El perfil seccomp "builtin" de Docker filtra syscalls por numero asumiendo un
+    # kernel upstream estandar. Sobre el kernel de CentOS/RHEL 7 (3.10 con miles de
+    # backports de Red Hat, numeracion de syscalls no estandar) eso bloquea llamadas
+    # que Postgres necesita durante initdb (postmaster.pid, preasignacion del WAL) y
+    # las devuelve como "Operation not permitted". Confirmado en produccion: con
+    # seccomp=unconfined initdb corre sin problema.
+    security_opt:
+      - seccomp:unconfined
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-pjud}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pjud}
       POSTGRES_DB: ${POSTGRES_DB:-pjud}
-      # Algunos VPS (Xen con syscalls restringidas) bloquean posix_fallocate() con
-      # "Operation not permitted" al preasignar el WAL -- se lo desactivamos a initdb.
-      POSTGRES_INITDB_ARGS: "--set=wal_init_zero=off --set=wal_recycle=off"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
@@ -62,6 +67,11 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     restart: unless-stopped
+    # Mismo problema de seccomp vs. kernel de RHEL7 que en "db" (ver comentario ahi):
+    # el sandbox propio de Chromium tambien depende de syscalls (clone/unshare/ptrace)
+    # que el perfil builtin puede bloquear en este host.
+    security_opt:
+      - seccomp:unconfined
     environment:
       <<: *app-env
     depends_on:
