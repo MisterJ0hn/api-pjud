@@ -95,7 +95,25 @@ docker compose logs -f migrate   # solo util si la migracion fallo
 Los logs tambien quedan en el volumen `logs` (`api.log`, `worker.log`), montado en
 `/data/logs` dentro de cada contenedor.
 
-## 6. Exponer con dominio + HTTPS (recomendado)
+## 6. Crear un cliente API y un usuario
+
+No hay endpoint publico de registro (es a proposito, igual que una API key de
+cualquier proveedor). Se usa `scripts/admin_cli.py` dentro del contenedor `api`:
+
+```bash
+# 1) crear el cliente (aplicacion que va a consumir la API) -- imprime el
+#    x-client-key UNA sola vez, guardarlo ahi mismo
+docker compose exec api python scripts/admin_cli.py crear-cliente "Portal Abogados"
+
+# 2) crear un usuario para ese cliente (usar el <cliente_id> que imprimio el paso 1)
+docker compose exec api python scripts/admin_cli.py crear-usuario <cliente_id> usuario@correo.cl "password-segura"
+```
+
+El usuario despues inicia sesion contra `POST /auth/login` (header `x-client-key`
++ body `email`/`password`) para obtener el bearer token con el que llama al resto
+de la API.
+
+## 7. Exponer con dominio + HTTPS (recomendado)
 
 `docker-compose.yml` publica la API en `localhost:7092` del VPS. Para exponerla en
 `PUBLIC_BASE_URL` con TLS, poner un reverse proxy delante (nginx, Caddy o similar)
@@ -111,7 +129,7 @@ api-pjud.temposoft.cl {
 Caddy obtiene y renueva el certificado solo. Con nginx + certbot es el patron
 habitual `proxy_pass http://127.0.0.1:8000;` + `certbot --nginx`.
 
-## 7. Operacion diaria
+## 8. Operacion diaria
 
 - **Actualizar codigo:** `rsync` los cambios (o `git pull`) y luego:
 
@@ -148,7 +166,7 @@ habitual `proxy_pass http://127.0.0.1:8000;` + `certbot --nginx`.
   docker compose down -v       # ademas borra los volumenes -- CUIDADO, borra la BD
   ```
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 - **`db` falla en bucle con `could not write to file "postmaster.pid": Operation not
   permitted` o `.../pg_wal/xlogtemp...: Operation not permitted`:** pasa en VPS con
