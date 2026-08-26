@@ -1,0 +1,74 @@
+x-app-env: &app-env
+  DATABASE_URL_ASYNC: postgresql+asyncpg://${POSTGRES_USER:-pjud}:${POSTGRES_PASSWORD:-pjud}@db:5432/${POSTGRES_DB:-pjud}
+  DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-pjud}:${POSTGRES_PASSWORD:-pjud}@db:5432/${POSTGRES_DB:-pjud}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://api-pjud.temposoft.cl}
+  DOCUMENTOS_DIR: /data/documentos
+  LOG_DIR: /data/logs
+  SYNC_LOCK_TIMEOUT_MINUTES: ${SYNC_LOCK_TIMEOUT_MINUTES:-15}
+  SYNC_MIN_INTERVAL_MINUTES: ${SYNC_MIN_INTERVAL_MINUTES:-30}
+  PLAYWRIGHT_HEADLESS: "False"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pjud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pjud}
+      POSTGRES_DB: ${POSTGRES_DB:-pjud}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pjud} -d ${POSTGRES_DB:-pjud}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: alembic upgrade head
+    environment:
+      <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - documentos:/data/documentos
+      - logs:/data/logs
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - documentos:/data/documentos
+      - logs:/data/logs
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - documentos:/data/documentos
+      - logs:/data/logs
+
+volumes:
+  db_data:
+  documentos:
+  logs:

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Consulta de causas PJUD</title>
+<style>
+  body { font-family: system-ui, Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; align-items: end; }
+  label { display: block; font-size: 0.85rem; margin-bottom: 0.25rem; color: #444; }
+  select, input { width: 100%; padding: 0.4rem; box-sizing: border-box; }
+  button { padding: 0.6rem 1.2rem; cursor: pointer; }
+  #buscar { grid-column: 1 / -1; justify-self: start; background: #1a3d6b; color: white; border: none; border-radius: 4px; }
+  #estado { margin-top: 1rem; font-style: italic; color: #555; }
+  #resultado { margin-top: 1.5rem; }
+  .resumen-box { background: #f2f5f9; border: 1px solid #d5dfea; border-radius: 6px; padding: 1rem; white-space: pre-wrap; }
+  details { margin-top: 0.75rem; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.5rem 0.75rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; font-size: 0.85rem; }
+  th, td { border: 1px solid #ddd; padding: 0.35rem 0.5rem; text-align: left; }
+  th { background: #eef2f7; }
+  .guardado { margin-top: 0.75rem; font-size: 0.85rem; color: #2a6b3d; }
+  .error { color: #a12525; }
+</style>
+</head>
+<body>
+<h1>Consulta de causas &mdash; Poder Judicial (Consulta Unificada)</h1>
+<p>Completa los datos de la causa (Civil, Laboral o Cobranza) y presiona Consultar. Los resultados quedan guardados en <code>output/</code>.</p>
+
+<form id="form-consulta">
+  <div>
+    <label for="competencia">Competencia</label>
+    <select id="competencia" name="competencia" required>
+      {% for c in competencias %}
+      <option value="{{ c }}">{{ c.capitalize() }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="corte">Corte</label>
+    <select id="corte" name="corte" required>
+      <option value="">Seleccione...</option>
+      {% for c in cortes %}
+      <option value="{{ c.value }}">{{ c.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="tribunal">Tribunal</label>
+    <select id="tribunal" name="tribunal" required>
+      <option value="">Seleccione Corte primero...</option>
+    </select>
+  </div>
+  <div>
+    <label for="libro_tipo">Libro/Tipo</label>
+    <select id="libro_tipo" name="libro_tipo" required></select>
+  </div>
+  <div>
+    <label for="rol">Rol</label>
+    <input type="number" id="rol" name="rol" required>
+  </div>
+  <div>
+    <label for="anio">Año</label>
+    <input type="number" id="anio" name="anio" required>
+  </div>
+  <button id="buscar" type="submit">Consultar</button>
+</form>
+
+<div id="estado"></div>
+<div id="resultado"></div>
+
+<script>
+const LIBRO_TIPO = {{ libro_tipo | tojson }};
+
+const competenciaEl = document.getElementById('competencia');
+const corteEl = document.getElementById('corte');
+const tribunalEl = document.getElementById('tribunal');
+const libroTipoEl = document.getElementById('libro_tipo');
+const estadoEl = document.getElementById('estado');
+const resultadoEl = document.getElementById('resultado');
+
+function poblarLibroTipo() {
+  const opciones = LIBRO_TIPO[competenciaEl.value] || [];
+  libroTipoEl.innerHTML = opciones.map(o => `<option value="${o}">${o}</option>`).join('');
+}
+
+async function parseJsonSafe(resp) {
+  const text = await resp.text();
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Respuesta inesperada del servidor (HTTP ${resp.status}): ${text.slice(0, 200)}`);
+  }
+}
+
+async function poblarTribunales() {
+  tribunalEl.innerHTML = '<option value="">Cargando...</option>';
+  if (!corteEl.value) {
+    tribunalEl.innerHTML = '<option value="">Seleccione Corte primero...</option>';
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ competencia: competenciaEl.value, corte: corteEl.value });
+    const resp = await fetch(`/tribunales?${params}`);
+    const opciones = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      tribunalEl.innerHTML = '<option value="">Error al cargar tribunales</option>';
+      resultadoEl.innerHTML = `<p class="error">${opciones.error || 'Error al obtener tribunales.'}</p>`;
+      return;
+    }
+    if (!opciones.length) {
+      tribunalEl.innerHTML = '<option value="">Sin tribunales para esta Corte</option>';
+      return;
+    }
+    tribunalEl.innerHTML = opciones.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+  } catch (err) {
+    tribunalEl.innerHTML = '<option value="">Error al cargar tribunales</option>';
+    resultadoEl.innerHTML = `<p class="error">${err.message || err}</p>`;
+  }
+}
+
+competenciaEl.addEventListener('change', () => { poblarLibroTipo(); poblarTribunales(); });
+corteEl.addEventListener('change', poblarTribunales);
+
+poblarLibroTipo();
+
+function renderTabla(tabla) {
+  if (!tabla.filas.length) return '<p><em>Sin registros.</em></p>';
+  const encabezado = tabla.headers.length
+    ? `<tr>${tabla.headers.map(h => `<th>${h}</th>`).join('')}</tr>`
+    : '';
+  const filas = tabla.filas.map(f => `<tr>${f.map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
+  return `<table>${encabezado}${filas}</table>`;
+}
+
+function renderResultado(data) {
+  if (!data.encontrada) {
+    resultadoEl.innerHTML = '<p class="error">No se encontró la causa con esos datos.</p>';
+    return;
+  }
+
+  let html = '';
+  if (data.aviso) {
+    html += `<p class="error">${data.aviso}</p>`;
+  }
+  if (data.resumen) {
+    html += `<div class="resumen-box"><strong>Resumen:</strong> ${data.resumen.join(' — ')}</div>`;
+  }
+  if (data.detalle_error) {
+    html += `<p class="error">${data.detalle_error}</p>`;
+  }
+  if (data.cabecera && typeof data.cabecera === 'object' && data.cabecera.campos && Object.keys(data.cabecera.campos).length) {
+    const filasCampos = Object.entries(data.cabecera.campos)
+      .map(([k, v]) => `<tr><th>${k}</th><td>${v || '-'}</td></tr>`)
+      .join('');
+    html += `<table style="margin-top:0.75rem;">${filasCampos}</table>`;
+  } else if (data.cabecera && typeof data.cabecera === 'string') {
+    // Formato antiguo (por si se esta viendo un datos.json guardado con una version previa).
+    html += `<div class="resumen-box" style="margin-top:0.75rem;">${data.cabecera.replace(/\n/g, '<br>')}</div>`;
+  }
+  if (data.documentos && data.documentos.length) {
+    const items = data.documentos
+      .map(d => `<li><a href="${d.url}" target="_blank" rel="noopener">${d.origen}</a></li>`)
+      .join('');
+    html += `<details open style="margin-top:0.75rem;"><summary>Documentos descargados (${data.documentos.length})</summary><ul>${items}</ul></details>`;
+  }
+  if (data.cabecera && typeof data.cabecera === 'object' && data.cabecera.secciones) {
+    for (const [nombre, tablas] of Object.entries(data.cabecera.secciones)) {
+      html += `<details open><summary>${nombre}</summary>`;
+      if (!tablas.length) {
+        html += '<p><em>Sin información.</em></p>';
+      } else {
+        tablas.forEach(t => { html += renderTabla(t); });
+      }
+      html += '</details>';
+    }
+  }
+  if (data.cuadernos) {
+    const nombresCuadernos = Object.keys(data.cuadernos);
+    const varios = nombresCuadernos.length > 1;
+    for (const [cuaderno, secciones] of Object.entries(data.cuadernos)) {
+      if (varios) html += `<h3>Cuaderno: ${cuaderno}</h3>`;
+      for (const [nombre, tablas] of Object.entries(secciones)) {
+        html += `<details open><summary>${nombre}</summary>`;
+        if (!tablas.length) {
+          html += '<p><em>Sin información.</em></p>';
+        } else {
+          tablas.forEach(t => { html += renderTabla(t); });
+        }
+        html += '</details>';
+      }
+    }
+  }
+  if (data.guardado_en) {
+    html += `<p class="guardado">Guardado en: ${data.guardado_en}</p>`;
+  }
+  resultadoEl.innerHTML = html;
+}
+
+document.getElementById('form-consulta').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  resultadoEl.innerHTML = '';
+  estadoEl.textContent = 'Consultando en el sitio del Poder Judicial, por favor espera...';
+
+  const payload = {
+    competencia: competenciaEl.value,
+    corte: corteEl.value,
+    tribunal: tribunalEl.value,
+    libro_tipo: libroTipoEl.value,
+    rol: document.getElementById('rol').value,
+    anio: document.getElementById('anio').value,
+  };
+
+  try {
+    const resp = await fetch('/consultar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      estadoEl.textContent = '';
+      resultadoEl.innerHTML = `<p class="error">${data.error || 'Error al consultar.'}</p>`;
+      return;
+    }
+    estadoEl.textContent = '';
+    renderResultado(data);
+  } catch (err) {
+    estadoEl.textContent = '';
+    resultadoEl.innerHTML = `<p class="error">${err.message || err}</p>`;
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# El tag de la imagen base debe coincidir con la version de playwright que termine
+# instalada por requirements-api.txt (los binarios de Chromium estan atados a la
+# version del paquete). Si cambia la version de playwright, actualizar el tag aqui.
+FROM mcr.microsoft.com/playwright/python:v1.62.0-jammy
+
+WORKDIR /app
+
+# xvfb: el sitio del PJUD detecta y bloquea navegadores headless, asi que el worker
+# corre Chromium en modo "headed" (PLAYWRIGHT_HEADLESS=False) contra un framebuffer
+# virtual -- no hay display real en el servidor.
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt \
+    && playwright install chromium
+
+COPY api ./api
+COPY scraper ./scraper
+COPY worker ./worker
+
+CMD ["xvfb-run", "-a", "--server-args=-screen 0 1280x1024x24", "python", "-m", "worker.main"]
