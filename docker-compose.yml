@@ -16,6 +16,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-pjud}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pjud}
       POSTGRES_DB: ${POSTGRES_DB:-pjud}
+      # Algunos VPS (Xen con syscalls restringidas) bloquean posix_fallocate() con
+      # "Operation not permitted" al preasignar el WAL -- se lo desactivamos a initdb.
+      POSTGRES_INITDB_ARGS: "--set=wal_init_zero=off --set=wal_recycle=off"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
