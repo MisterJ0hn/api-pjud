@@ -18,8 +18,14 @@ RUN pip install --no-cache-dir -r requirements-api.txt \
 COPY api ./api
 COPY scraper ./scraper
 COPY worker ./worker
+COPY scripts ./scripts
 COPY worker-entrypoint.sh /worker-entrypoint.sh
 RUN chmod +x /worker-entrypoint.sh
+
+# Fijo (no solo exportado por el entrypoint) para que tambien lo vea un proceso
+# lanzado con "docker compose exec"/"run" -- por ejemplo scripts/poblar_catalogo_tribunales.py,
+# que se conecta al mismo Xvfb :99 que ya levanto el proceso principal.
+ENV DISPLAY=:99
 
 ENTRYPOINT ["/worker-entrypoint.sh"]
 CMD ["python", "-m", "worker.main"]

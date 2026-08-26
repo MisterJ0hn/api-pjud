@@ -13,6 +13,7 @@ from api.db.models.movimientos import (
     Notificacion,
 )
 from api.db.models.sync_job import SyncJob
+from api.db.models.tribunales import TribunalCatalogo
 
 __all__ = [
     "ClienteApi",
@@ -32,4 +33,5 @@ __all__ = [
     "AnexoCausa",
     "InformacionReceptor",
     "SyncJob",
+    "TribunalCatalogo",
 ]

@@ -113,7 +113,35 @@ El usuario despues inicia sesion contra `POST /auth/login` (header `x-client-key
 + body `email`/`password`) para obtener el bearer token con el que llama al resto
 de la API.
 
-## 7. Exponer con dominio + HTTPS (recomendado)
+## 7. Poblar el catalogo de cortes y tribunales
+
+`GET /catalogo/tribunales?competencia=civil` (auth igual que el resto de la API)
+devuelve las cortes con sus tribunales (`id` + `nombre`), pero lee de una tabla
+propia (`tribunales_catalogo`) que arranca vacia -- el sitio del PJUD no expone
+esa lista completa por ningun endpoint publico, hay que recorrer el combo de
+tribunales corte por corte con un navegador real. `migrate` ya crea la tabla; para
+cargarla hay que correr `scripts/poblar_catalogo_tribunales.py` **una vez** (o cada
+vez que haga falta refrescarla) dentro del contenedor `worker`, que es el unico que
+tiene Chromium instalado.
+
+Como usa la misma sesion de Chromium "headed" contra el sitio del PJUD, conviene
+frenar el worker mientras corre para no tener dos navegadores golpeando el sitio
+al mismo tiempo (mismo tipo de bloqueo que el 403 que ya vimos):
+
+```bash
+docker compose stop worker
+docker compose run --rm worker python scripts/poblar_catalogo_tribunales.py
+docker compose start worker
+```
+
+Tarda varios minutos (recorre 17 cortes x cada competencia). Por defecto puebla
+`civil`, `laboral` y `cobranza`; para limitarlo a una sola competencia:
+
+```bash
+docker compose run --rm worker python scripts/poblar_catalogo_tribunales.py civil
+```
+
+## 8. Exponer con dominio + HTTPS (recomendado)
 
 `docker-compose.yml` publica la API en `localhost:7092` del VPS. Para exponerla en
 `PUBLIC_BASE_URL` con TLS, poner un reverse proxy delante (nginx, Caddy o similar)
@@ -129,7 +157,7 @@ api-pjud.temposoft.cl {
 Caddy obtiene y renueva el certificado solo. Con nginx + certbot es el patron
 habitual `proxy_pass http://127.0.0.1:8000;` + `certbot --nginx`.
 
-## 8. Operacion diaria
+## 9. Operacion diaria
 
 - **Actualizar codigo:** `rsync` los cambios (o `git pull`) y luego:
 
@@ -166,7 +194,7 @@ habitual `proxy_pass http://127.0.0.1:8000;` + `certbot --nginx`.
   docker compose down -v       # ademas borra los volumenes -- CUIDADO, borra la BD
   ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - **`db` falla en bucle con `could not write to file "postmaster.pid": Operation not
   permitted` o `.../pg_wal/xlogtemp...: Operation not permitted`:** pasa en VPS con
