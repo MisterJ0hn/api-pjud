@@ -34,13 +34,24 @@ router = APIRouter(tags=["civil"])
 
 COMPETENCIA = "civil"
 
-_RUT_RE = re.compile(r"^\d{7,8}-[\dkK]$")
+_RUT_RE = re.compile(r"^(\d{7,8})(?:-([\dkK]))?$")
+
+
+def _digito_verificador(cuerpo: str) -> str:
+    suma, factor = 0, 2
+    for digito in reversed(cuerpo):
+        suma += int(digito) * factor
+        factor = 2 if factor == 7 else factor + 1
+    resto = 11 - (suma % 11)
+    return "0" if resto == 11 else "K" if resto == 10 else str(resto)
 
 
 def _normalizar_credenciales(body: SincronizarCivilRequest) -> tuple[str, str, int] | None:
     """Devuelve (rut, clave, metodo_login) si el request pide modo privado, o None si
     es una sincronizacion publica. Valida que los tres campos vengan juntos y bien
-    formados; cualquier problema es un 400 'Error en campo [...]'."""
+    formados; cualquier problema es un 400 'Error en campo [...]'. El RUT se normaliza
+    siempre a 'cuerpo-DV' (con o sin puntos, con o sin DV en la entrada); el DV se
+    calcula si no vino y se valida si vino."""
     if body.rut is None and body.clave is None and body.metodo_login is None:
         return None
 
@@ -51,11 +62,15 @@ def _normalizar_credenciales(body: SincronizarCivilRequest) -> tuple[str, str, i
     if body.metodo_login not in (1, 2):
         raise CampoInvalidoError("metodo_login")
 
-    rut = body.rut.strip().replace(".", "").replace(" ", "").upper()
-    if not _RUT_RE.match(rut):
+    match = _RUT_RE.match(body.rut.strip().replace(".", "").replace(" ", "").upper())
+    if match is None:
+        raise CampoInvalidoError("rut")
+    cuerpo, dv = match.group(1), match.group(2)
+    esperado = _digito_verificador(cuerpo)
+    if dv is not None and dv != esperado:
         raise CampoInvalidoError("rut")
 
-    return rut, body.clave, body.metodo_login
+    return f"{cuerpo}-{esperado}", body.clave, body.metodo_login
 
 
 @router.post("/sincronizar_civil", response_model=SincronizarResponse)
