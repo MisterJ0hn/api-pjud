@@ -13,6 +13,22 @@ Request:
     "rol": 11247,
     "anio": 2026
 }
+
+Causas privadas (con login en la Oficina Judicial Virtual): agregar al request de
+sincronizar_civil los campos rut, clave y metodo_login (1 = Clave Poder Judicial,
+2 = Clave Unica). corte y tribunal se siguen enviando (solo forman parte de la clave
+de la causa; la busqueda privada filtra unicamente por Rit/Rol/Anio). Las credenciales
+se guardan cifradas en la cola y se borran cuando el job termina.
+{
+    "corte": 11,
+    "tribunal": 234,
+    "tipo": "C",
+    "rol": 11247,
+    "anio": 2026,
+    "rut": "12345678-9",
+    "clave": "****",
+    "metodo_login": 1
+}
 Response 200:
 {
     "exito": true,

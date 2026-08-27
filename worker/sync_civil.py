@@ -36,7 +36,7 @@ from api.db.models.movimientos import (
     MovimientoHistoriaAnexo,
     Notificacion,
 )
-from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionAsync
+from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionAsync, PjudSessionPrivada
 from worker.idempotencia import extension_por_content_type, hash_fila, ruta_documento, slug
 
 logger = logging.getLogger("pjud.worker.sync_civil")
@@ -294,11 +294,23 @@ async def _sincronizar_exhortos(
     return hubo_cambios
 
 
-async def sincronizar_causa(session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa) -> None:
+async def sincronizar_causa(
+    session: AsyncSession,
+    sesion_pjud: PjudSessionAsync | PjudSessionPrivada,
+    causa: Causa,
+    *,
+    privada: bool = False,
+) -> None:
     rol_fmt = causa.rol_formateado
-    resultado = await sesion_pjud.buscar_y_extraer(
-        causa.competencia, str(causa.corte), str(causa.tribunal), causa.tipo, causa.rol, causa.anio
-    )
+    if privada:
+        # Causa privada: ya se busca dentro de "Mis Causas" -> "Civil" filtrando solo por
+        # Rit / Rol / Anio (no hay Corte ni Juzgado). El detalle extraido tiene la misma
+        # forma que el de la Consulta Unificada, asi que el resto del flujo no cambia.
+        resultado = await sesion_pjud.buscar_y_extraer_privada(causa.tipo, causa.rol, causa.anio)
+    else:
+        resultado = await sesion_pjud.buscar_y_extraer(
+            causa.competencia, str(causa.corte), str(causa.tribunal), causa.tipo, causa.rol, causa.anio
+        )
 
     if not resultado.get("encontrada"):
         raise CausaNoEncontrada(f"Causa {rol_fmt} no encontrada en PJUD")

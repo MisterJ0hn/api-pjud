@@ -112,8 +112,23 @@ async def intentar_lock_sincronizacion(session: AsyncSession, causa_id, timeout_
     return fila is not None
 
 
-async def encolar_sync_job(session: AsyncSession, causa_id) -> None:
-    session.add(SyncJob(causa_id=causa_id, estado="pendiente"))
+async def encolar_sync_job(
+    session: AsyncSession,
+    causa_id,
+    *,
+    rut_cifrado: str | None = None,
+    clave_cifrada: str | None = None,
+    metodo_login: int | None = None,
+) -> None:
+    session.add(
+        SyncJob(
+            causa_id=causa_id,
+            estado="pendiente",
+            rut_cifrado=rut_cifrado,
+            clave_cifrada=clave_cifrada,
+            metodo_login=metodo_login,
+        )
+    )
     await session.commit()
     await session.execute(text("NOTIFY sync_jobs"))
     await session.commit()

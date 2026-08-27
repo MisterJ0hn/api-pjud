@@ -53,6 +53,14 @@ Ajustar como minimo:
   (ej. `https://api-pjud.temposoft.cl`), usado por el endpoint `/public/...`.
 - `API_PORT` — puerto del host donde se publica la API (por defecto `7092`; el
   contenedor siempre escucha en `8000` puertas adentro).
+- `PJUD_CRED_SECRET_KEY` — clave Fernet para cifrar las credenciales (RUT + clave)
+  de causas privadas mientras esperan en la cola `sync_job`. Obligatoria si se van a
+  sincronizar causas privadas. Generar una con:
+  ```bash
+  docker compose run --rm api python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  ```
+  Si se pierde/rota esta clave, los jobs privados encolados que aun no se procesaron
+  quedan ilegibles (hay que reenviarlos); no afecta causas ya sincronizadas.
 
 Este `.env` es distinto al `.env` que usa el proyecto en modo local (ese tiene
 `localhost` como host de Postgres); `docker-compose.yml` arma las URLs de conexion

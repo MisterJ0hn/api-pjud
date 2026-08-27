@@ -9,6 +9,20 @@ class CausaRequest(BaseModel):
     anio: int
 
 
+class SincronizarCivilRequest(CausaRequest):
+    """Request de sincronizar_civil. Si trae `rut` + `clave` + `metodo_login`, la causa
+    se sincroniza en modo privado (con login en la Oficina Judicial Virtual) en vez de
+    la Consulta Unificada publica. `corte` y `tribunal` se siguen enviando: para causas
+    privadas solo forman parte de la clave de la causa, no se usan para navegar.
+
+    metodo_login: 1 = Clave Poder Judicial, 2 = Clave Unica.
+    """
+
+    rut: str | None = None
+    clave: str | None = None
+    metodo_login: int | None = None
+
+
 class SincronizarResponse(BaseModel):
     exito: bool = True
     code: int = 200

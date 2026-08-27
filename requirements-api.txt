@@ -8,5 +8,6 @@ asyncpg>=0.29
 psycopg[binary]>=3.1
 alembic>=1.13
 passlib[argon2]>=1.7
+cryptography>=43
 playwright>=1.45
 python-dotenv>=1.0

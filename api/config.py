@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     playwright_headless: bool = False
 
+    # Clave Fernet (urlsafe base64, 32 bytes) para cifrar las credenciales de PJUD
+    # (RUT + clave) mientras esperan en la fila sync_job a que el worker las use.
+    # Generar con: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    pjud_cred_secret_key: str = ""
+
 
 settings = Settings()
 

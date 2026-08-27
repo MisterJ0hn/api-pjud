@@ -1,19 +1,27 @@
-"""Cliente Playwright (API async) para la Consulta Unificada publica de PJUD, usado por
-el worker de sincronizacion. Es el equivalente async de `scraper/pjud_client.py` (que se
-mantiene intacto y sin cambios para la app Flask legacy) con dos diferencias de fondo:
+"""Clientes Playwright (API async) para la Oficina Judicial Virtual (PJUD), usados por
+el worker de sincronizacion. Dos modos:
 
-1. Extraccion combinada por fila: en vez de extraer el texto de las tablas y resolver los
-   documentos descargables en dos recorridos DOM separados (como hace el cliente sync),
-   aca se hace en un solo recorrido por `<tr>`, devolviendo por cada celda tanto su texto
-   como los enlaces/descargas que contiene especificamente esa celda. Esto es necesario
-   para poder vincular, por ejemplo, el documento de un folio de Historia con ESE folio
-   (y no con la fila siguiente), que es algo que el cliente sync no garantiza hoy.
+- `PjudSessionAsync`: Consulta Unificada **publica** (sin login), navega por competencia
+  + corte + tribunal. Es el equivalente async de `scraper/pjud_client.py` (que se
+  mantiene intacto para la app Flask legacy).
+
+- `PjudSessionPrivada`: causas **privadas**, visibles solo tras iniciar sesion (Clave
+  Poder Judicial o Clave Unica). Navega "Mis Causas" -> pestana "Civil" -> filtros por
+  Rit / Rol / Anio (no hay Corte ni Juzgado).
+
+Ambos comparten, via `_PjudModalScraper`, toda la extraccion del modal de detalle de una
+causa (cabecera + cuadernos + pestanas + sub-modales + descargas): una vez abierto el
+modal, el DOM es identico en los dos modos.
+
+Diferencias de fondo respecto al cliente sync (`scraper/pjud_client.py`):
+
+1. Extraccion combinada por fila: por cada `<tr>` se devuelve tanto el texto de cada
+   celda como los enlaces/descargas que contiene esa celda especifica, para poder
+   vincular (p. ej.) el documento de un folio de Historia con ESE folio.
 
 2. No decide nombres de archivo ni escribe en disco: solo entrega URLs de PJUD (validas
-   solo dentro de la sesion actual) y expone `descargar_bytes()` para bajarlas bajo
-   demanda. La decision de que' es idempotente, que' ya existe y con que' nombre se
-   guarda es responsabilidad del worker (ve `worker/sync_civil.py`), que es quien conoce
-   el estado ya persistido en Postgres.
+   solo dentro de la sesion actual) y expone `descargar_bytes()`. La idempotencia y el
+   nombrado los decide el worker (`worker/sync_civil.py`).
 """
 
 import logging
@@ -24,6 +32,8 @@ from playwright.async_api import async_playwright
 logger = logging.getLogger("pjud.scraper.async")
 
 BASE_URL = "https://oficinajudicialvirtual.pjud.cl/includes/sesion-consultaunificada.php"
+HOME_URL = "https://oficinajudicialvirtual.pjud.cl/home/"
+INDEX_PRIVADO_URL = "https://oficinajudicialvirtual.pjud.cl/indexN.php"
 
 COMPETENCIAS = {"civil": "3", "laboral": "4", "cobranza": "6"}
 
@@ -31,8 +41,7 @@ PAUSA_ENTRE_CONSULTAS_MS = 4000
 
 # Extrae, por cada tabla, sus headers y sus filas -- cada fila trae tanto el texto de
 # cada celda (`valores`) como los enlaces/descargas resueltos DENTRO de esa celda
-# especifica (`enlaces`). Reemplaza a JS_EXTRAER_TABLAS + JS_RESOLVER_DESCARGAS del
-# cliente sync (que resolvian descargas a nivel de todo el contenedor, no por celda).
+# especifica (`enlaces`).
 JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
     const headerCells = t.querySelectorAll('thead th');
     const headers = (headerCells.length ? Array.from(headerCells) : Array.from(t.querySelectorAll('tr:first-child th')))
@@ -103,56 +112,36 @@ JS_EXTRAER_CABECERA = """(modalId) => {
     return {campos, descargas, submodales};
 }"""
 
+JS_MODAL_VISIBLE = """() => {
+    const modals = Array.from(document.querySelectorAll('.modal.in'));
+    const visible = modals.find(m => m.offsetParent !== null);
+    return visible ? visible.id : (modals.length ? modals[modals.length - 1].id : null);
+}"""
+
+JS_CERRAR_MODAL = """(modalId) => {
+    const modal = document.getElementById(modalId);
+    const cerrar = modal.querySelector('.close, button.close, [data-dismiss="modal"]');
+    if (cerrar) cerrar.click();
+}"""
+
 
 class CausaNoEncontrada(Exception):
     pass
 
 
-class PjudSessionAsync:
-    def __init__(self, headless: bool = True):
-        self._headless = headless
-        self._playwright = None
-        self._browser = None
-        self._context = None
-        self._page = None
+class LoginPrivadoError(Exception):
+    """No se pudo iniciar sesion en la Oficina Judicial Virtual (credenciales invalidas,
+    Clave Unica rechazada, o el sitio cambio el flujo de login). Error terminal: el
+    worker no reintenta."""
 
-    async def iniciar(self) -> None:
-        logger.info("Iniciando sesion Playwright async (headless=%s)", self._headless)
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=self._headless)
-        self._context = await self._browser.new_context()
-        self._page = await self._context.new_page()
-        await self._goto_consulta_unificada()
-        logger.info("Sesion Playwright async lista")
 
-    async def cerrar(self) -> None:
-        logger.info("Cerrando sesion Playwright async")
-        if self._context:
-            await self._context.close()
-        if self._browser:
-            await self._browser.close()
-        if self._playwright:
-            await self._playwright.stop()
+class _PjudModalScraper:
+    """Extraccion del modal de detalle de una causa, comun a los modos publico y privado.
+    Las subclases deben dejar `self._page` y `self._context` listos (sesion Playwright)
+    antes de llamar a estos metodos."""
 
-    async def _goto_consulta_unificada(self) -> None:
-        await self._page.goto(BASE_URL, wait_until="networkidle")
-        await self._ensure_rit_tab()
-
-    async def _ensure_rit_tab(self) -> None:
-        page = self._page
-        if not await page.is_visible("#competencia"):
-            await page.click('a[href="#busRit"]')
-        await page.wait_for_selector("#competencia", state="visible")
-
-    async def _seleccionar_competencia_corte(self, competencia: str, corte: str) -> None:
-        page = self._page
-        await self._ensure_rit_tab()
-        await page.select_option("#competencia", COMPETENCIAS[competencia])
-        await page.wait_for_timeout(400)
-        await page.select_option("#conCorte", corte)
-        await page.wait_for_function(
-            "document.querySelectorAll('#conTribunal option').length > 1", timeout=15000
-        )
+    _page = None
+    _context = None
 
     async def descargar_bytes(self, url: str) -> tuple[str, bytes] | None:
         """Descarga una URL de PJUD y valida que sea realmente un documento (el sitio
@@ -192,7 +181,9 @@ class PjudSessionAsync:
         except Exception:
             logger.warning("No se pudo abrir el sub-modal %s", target)
             return None
-        await page.wait_for_timeout(900)
+        # En Mis Causas los sub-modales cargan su contenido por AJAX (onclick), asi que
+        # se espera algo mas que en la Consulta Unificada (donde venian pre-renderizados).
+        await page.wait_for_timeout(1600)
         if not await page.query_selector(f"#{sub_id}"):
             logger.warning("Sub-modal %s no aparecio en el DOM", target)
             return None
@@ -238,6 +229,117 @@ class PjudSessionAsync:
             secciones[tab["nombre"]] = tablas[0] if tablas else {"headers": [], "filas": []}
         return secciones
 
+    async def _extraer_detalle_de_modal(self, modal_id: str) -> dict:
+        """Con el modal de detalle ya abierto (`modal_id`), extrae cabecera + cuadernos y
+        cierra el modal. Devuelve {"cabecera": {...}, "cuadernos": [...]}. No descarga
+        ningun documento (eso lo decide el worker)."""
+        page = self._page
+
+        cabecera_info = await page.evaluate(JS_EXTRAER_CABECERA, modal_id)
+        campos = cabecera_info.get("campos", {})
+        descargas = cabecera_info.get("descargas", [])
+
+        submodales = {}
+        for sub in cabecera_info.get("submodales", []):
+            tabla = await self._procesar_submodal(modal_id, sub["target"])
+            if tabla is not None:
+                submodales[sub["label"]] = tabla
+
+        cuaderno_opciones = await page.evaluate(
+            """(modalId) => {
+                const modal = document.getElementById(modalId);
+                const sel = modal.querySelector('select');
+                if (!sel) return null;
+                return Array.from(sel.options).map(o => ({value: o.value, label: o.textContent.trim()}));
+            }""",
+            modal_id,
+        )
+
+        cuadernos = []
+        if cuaderno_opciones:
+            select_selector = f"#{modal_id} select"
+            etiquetas = [o["label"] for o in cuaderno_opciones]
+            for numero, etiqueta in enumerate(etiquetas, start=1):
+                if len(etiquetas) > 1:
+                    valor_actual = await page.eval_on_selector(
+                        select_selector,
+                        """(sel, etiqueta) => {
+                            const opt = Array.from(sel.options).find(o => o.textContent.trim() === etiqueta);
+                            return opt ? opt.value : null;
+                        }""",
+                        etiqueta,
+                    )
+                    if valor_actual is None:
+                        logger.warning("Cuaderno '%s' ya no aparece en el selector; se omite", etiqueta)
+                        continue
+                    try:
+                        await page.select_option(select_selector, valor_actual)
+                    except Exception:
+                        logger.exception("No se pudo cambiar al cuaderno '%s'; se omite", etiqueta)
+                        continue
+                    await page.wait_for_timeout(900)
+                secciones = await self._extraer_cuaderno_actual(modal_id)
+                nombre_limpio = re.sub(r"^\d+\s*-\s*", "", etiqueta).strip() or etiqueta
+                cuadernos.append({"numero": numero, "nombre": nombre_limpio, "secciones": secciones})
+        else:
+            secciones = await self._extraer_cuaderno_actual(modal_id)
+            cuadernos.append({"numero": 1, "nombre": "Principal", "secciones": secciones})
+
+        await page.evaluate(JS_CERRAR_MODAL, modal_id)
+        await page.wait_for_timeout(300)
+
+        return {
+            "cabecera": {"campos": campos, "descargas": descargas, "submodales": submodales},
+            "cuadernos": cuadernos,
+        }
+
+
+class PjudSessionAsync(_PjudModalScraper):
+    def __init__(self, headless: bool = True):
+        self._headless = headless
+        self._playwright = None
+        self._browser = None
+        self._context = None
+        self._page = None
+
+    async def iniciar(self) -> None:
+        logger.info("Iniciando sesion Playwright async (headless=%s)", self._headless)
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(headless=self._headless)
+        self._context = await self._browser.new_context()
+        self._page = await self._context.new_page()
+        await self._goto_consulta_unificada()
+        logger.info("Sesion Playwright async lista")
+
+    async def cerrar(self) -> None:
+        logger.info("Cerrando sesion Playwright async")
+        if self._context:
+            await self._context.close()
+        if self._browser:
+            await self._browser.close()
+        if self._playwright:
+            await self._playwright.stop()
+
+    async def _goto_consulta_unificada(self) -> None:
+        await self._page.goto(BASE_URL, wait_until="networkidle")
+        await self._ensure_rit_tab()
+
+    async def _ensure_rit_tab(self) -> None:
+        page = self._page
+        if not await page.is_visible("#competencia"):
+            await page.click('a[href="#busRit"]')
+        await page.wait_for_selector("#competencia", state="visible")
+
+    async def _seleccionar_competencia_corte(self, competencia: str, corte: str) -> None:
+        page = self._page
+        await self._ensure_rit_tab()
+        await page.select_option("#competencia", COMPETENCIAS[competencia])
+        await page.wait_for_timeout(400)
+        await page.select_option("#conCorte", corte)
+        await page.wait_for_function(
+            "document.querySelectorAll('#conTribunal option').length > 1", timeout=15000
+        )
+
     async def get_tribunales(self, competencia: str, corte: str) -> list[dict]:
         await self._seleccionar_competencia_corte(competencia, corte)
         options = await self._page.eval_on_selector_all(
@@ -248,8 +350,8 @@ class PjudSessionAsync:
     async def buscar_y_extraer(
         self, competencia: str, corte: str, tribunal: str, tipo: str, rol, anio
     ) -> dict:
-        """Reproduce la busqueda humana de la causa y extrae cabecera + cuadernos. No
-        descarga ningun documento (eso lo decide el worker, ver modulo docstring)."""
+        """Reproduce la busqueda humana de la causa en la Consulta Unificada publica y
+        extrae cabecera + cuadernos."""
         page = self._page
         logger.info(
             "Buscando causa %s-%s-%s (competencia=%s, corte=%s, tribunal=%s)",
@@ -285,80 +387,239 @@ class PjudSessionAsync:
                 return {"encontrada": False}
 
             await page.wait_for_timeout(700)
-            modal_id = await page.evaluate(
-                """() => {
-                    const modals = Array.from(document.querySelectorAll('.modal.in'));
-                    const visible = modals.find(m => m.offsetParent !== null);
-                    return visible ? visible.id : (modals.length ? modals[modals.length - 1].id : null);
-                }"""
-            )
+            modal_id = await page.evaluate(JS_MODAL_VISIBLE)
             if not modal_id:
                 return {"encontrada": True, "error": "No se pudo abrir el detalle de la causa"}
 
-            cabecera_info = await page.evaluate(JS_EXTRAER_CABECERA, modal_id)
-            campos = cabecera_info.get("campos", {})
-            descargas = cabecera_info.get("descargas", [])
+            detalle = await self._extraer_detalle_de_modal(modal_id)
+            return {"encontrada": True, **detalle}
+        finally:
+            await page.wait_for_timeout(PAUSA_ENTRE_CONSULTAS_MS)
 
-            submodales = {}
-            for sub in cabecera_info.get("submodales", []):
-                tabla = await self._procesar_submodal(modal_id, sub["target"])
-                if tabla is not None:
-                    submodales[sub["label"]] = tabla
 
-            cuaderno_opciones = await page.evaluate(
-                """(modalId) => {
-                    const modal = document.getElementById(modalId);
-                    const sel = modal.querySelector('select');
-                    if (!sel) return null;
-                    return Array.from(sel.options).map(o => ({value: o.value, label: o.textContent.trim()}));
-                }""",
-                modal_id,
+class PjudSessionPrivada(_PjudModalScraper):
+    """Sesion autenticada en la Oficina Judicial Virtual para causas civiles privadas.
+
+    Flujo (validado en vivo contra el sitio):
+      home -> abrir modal de acceso -> Clave Poder Judicial (RUT sin DV + clave) o
+      Clave Unica -> indexN.php -> Mis Causas -> pestana Civil (#civilTab / #tab3) ->
+      activar el check "Filtros" (#filtroMisCauCiv) -> Rit (#tipoMisCauCiv) / Rol
+      (#rolMisCauCiv) / Anio (#anhoMisCauCiv) -> Buscar (#btnConsultaMisCauCiv) ->
+      abrir el detalle (lupa de la fila) -> modal #modalDetalleMisCauCivil.
+
+    El modal de detalle tiene la MISMA estructura que el de la Consulta Unificada
+    (table.table-titulos + select de cuaderno + pestanas Historia/Litigantes/
+    Notificaciones/Escritos por Resolver/Exhortos), asi que la extraccion la hace
+    `_extraer_detalle_de_modal`, igual que en el modo publico.
+
+    Ambos metodos de login (Clave Poder Judicial y Clave Unica) estan validados
+    end-to-end contra el sitio real.
+    """
+
+    METODO_CLAVE_PJUD = 1
+    METODO_CLAVE_UNICA = 2
+
+    MODAL_DETALLE = "modalDetalleMisCauCivil"
+
+    def __init__(self, rut: str, clave: str, metodo_login: int, headless: bool = False):
+        self._rut = rut
+        self._clave = clave
+        self._metodo_login = metodo_login
+        self._headless = headless
+        self._playwright = None
+        self._browser = None
+        self._context = None
+        self._page = None
+
+    @property
+    def _rut_sin_dv(self) -> str:
+        return self._rut.split("-")[0].replace(".", "").strip()
+
+    async def iniciar(self) -> None:
+        logger.info(
+            "Iniciando sesion Playwright privada (headless=%s, metodo_login=%s)",
+            self._headless, self._metodo_login,
+        )
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(headless=self._headless)
+        self._context = await self._browser.new_context()
+        self._page = await self._context.new_page()
+        await self._login()
+        logger.info("Sesion Playwright privada lista")
+
+    async def cerrar(self) -> None:
+        logger.info("Cerrando sesion Playwright privada")
+        if self._context:
+            await self._context.close()
+        if self._browser:
+            await self._browser.close()
+        if self._playwright:
+            await self._playwright.stop()
+
+    # --- Login -----------------------------------------------------------------
+
+    async def _login(self) -> None:
+        page = self._page
+        # `networkidle` no llega nunca (reCAPTCHA invisible mantiene la red ocupada).
+        await page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60000)
+        await page.wait_for_timeout(5000)
+
+        if self._metodo_login == self.METODO_CLAVE_UNICA:
+            await self._login_clave_unica()
+        else:
+            await self._login_clave_pjud()
+
+        for _ in range(30):
+            await page.wait_for_timeout(2000)
+            if "indexN.php" in page.url:
+                break
+
+        if "indexN.php" not in page.url:
+            raise LoginPrivadoError(
+                f"Login no completado (URL actual: {page.url}); credenciales invalidas o flujo cambiado"
             )
+        try:
+            await page.wait_for_load_state("domcontentloaded")
+        except Exception:
+            pass
+        # indexN.php sigue cargando su JS y secciones despues del redirect.
+        await page.wait_for_timeout(4000)
 
-            cuadernos = []
-            if cuaderno_opciones:
-                select_selector = f"#{modal_id} select"
-                etiquetas = [o["label"] for o in cuaderno_opciones]
-                for numero, etiqueta in enumerate(etiquetas, start=1):
-                    if len(etiquetas) > 1:
-                        valor_actual = await page.eval_on_selector(
-                            select_selector,
-                            """(sel, etiqueta) => {
-                                const opt = Array.from(sel.options).find(o => o.textContent.trim() === etiqueta);
-                                return opt ? opt.value : null;
-                            }""",
-                            etiqueta,
-                        )
-                        if valor_actual is None:
-                            logger.warning("Cuaderno '%s' ya no aparece en el selector; se omite", etiqueta)
-                            continue
-                        try:
-                            await page.select_option(select_selector, valor_actual)
-                        except Exception:
-                            logger.exception("No se pudo cambiar al cuaderno '%s'; se omite", etiqueta)
-                            continue
-                        await page.wait_for_timeout(900)
-                    secciones = await self._extraer_cuaderno_actual(modal_id)
-                    nombre_limpio = re.sub(r"^\d+\s*-\s*", "", etiqueta).strip() or etiqueta
-                    cuadernos.append({"numero": numero, "nombre": nombre_limpio, "secciones": secciones})
-            else:
-                secciones = await self._extraer_cuaderno_actual(modal_id)
-                cuadernos.append({"numero": 1, "nombre": "Principal", "secciones": secciones})
+    async def _login_clave_pjud(self) -> None:
+        """Clave Poder Judicial: modal #segunda-clave-access en el mismo dominio. El RUT
+        va SIN digito verificador (asi lo pide el campo). Los id de los inputs son
+        aleatorios por carga, por eso se seleccionan por tipo dentro del modal."""
+        page = self._page
+        try:
+            await page.evaluate("document.getElementById('btnSegClave').click()")
+        except Exception as exc:
+            raise LoginPrivadoError(f"No se pudo abrir el modal de Clave Poder Judicial: {exc}")
+        await page.wait_for_selector("#segunda-clave-access.in", state="visible", timeout=15000)
+        await page.locator("#segunda-clave-access input[type='text']:visible").first.fill(self._rut_sin_dv)
+        await page.locator("#segunda-clave-access input[type='password']:visible").first.fill(self._clave)
+        await page.click("#btnSegundaClaveIngresar")
 
-            await page.evaluate(
-                """(modalId) => {
-                    const modal = document.getElementById(modalId);
-                    const cerrar = modal.querySelector('.close, button.close, [data-dismiss="modal"]');
-                    if (cerrar) cerrar.click();
-                }""",
-                modal_id,
+    async def _login_clave_unica(self) -> None:
+        """Clave Unica: el enlace dispara AutenticaCUnica() y redirige a
+        accounts.claveunica.gob.cl (RUN con digito verificador)."""
+        page = self._page
+        try:
+            await page.evaluate("AutenticaCUnica()")
+        except Exception:
+            try:
+                await page.click("text=Clave Única", timeout=8000)
+            except Exception as exc:
+                raise LoginPrivadoError(f"No se pudo iniciar el flujo de Clave Unica: {exc}")
+        try:
+            await page.wait_for_url(re.compile(r"claveunica\.gob\.cl"), timeout=30000)
+        except Exception:
+            pass
+        try:
+            await page.wait_for_selector("#uname", state="visible", timeout=20000)
+        except Exception:
+            raise LoginPrivadoError("No aparecio el formulario de Clave Unica")
+        await page.wait_for_timeout(1200)
+        # ClaveUnica valida y codifica los campos con eventos por tecla: `fill()` no los
+        # dispara (la clave queda sin codificar y el submit no avanza), hay que teclear.
+        uname = page.locator("#uname")
+        await uname.click()
+        await uname.press_sequentially(self._rut, delay=60)
+        pword = page.locator("#pword")
+        await pword.click()
+        await pword.press_sequentially(self._clave, delay=60)
+        await page.wait_for_timeout(800)
+        await page.click("#login-submit")
+
+    # --- Busqueda en "Mis Causas" / pestana "Civil" ---------------------------
+
+    async def _ir_a_mis_causas_civil(self) -> None:
+        page = self._page
+        # La seccion "Mis Causas" (y con ella la pestana #civilTab) carga por AJAX; se
+        # reintenta un par de veces porque a veces el indexN todavia esta inicializando.
+        for intento in range(4):
+            if await page.query_selector("#civilTab"):
+                break
+            try:
+                await page.click("text=Mis Causas", timeout=6000)
+            except Exception:
+                try:
+                    await page.evaluate("typeof misCausas === 'function' && misCausas()")
+                except Exception:
+                    pass
+            await page.wait_for_timeout(4000)
+        await page.wait_for_selector("#civilTab", timeout=15000)
+        await page.click("#civilTab")
+        await page.wait_for_timeout(2500)
+
+    async def _activar_filtros(self) -> None:
+        page = self._page
+        # #filtroMisCauCiv es un checkbox (data-toggle="collapse" -> #collFiltrosCiv) que
+        # queda fuera de viewport; se activa por JS si no esta ya marcado.
+        try:
+            ya = await page.evaluate(
+                """() => {
+                    const c = document.getElementById('filtroMisCauCiv');
+                    if (!c) return null;
+                    if (!c.checked) c.click();
+                    return true;
+                }"""
             )
-            await page.wait_for_timeout(300)
+            if ya is None:
+                logger.warning("No se encontro el check #filtroMisCauCiv en la pestana Civil")
+        except Exception:
+            logger.exception("Error al activar el check de filtros")
+        await page.wait_for_timeout(1200)
 
-            return {
-                "encontrada": True,
-                "cabecera": {"campos": campos, "descargas": descargas, "submodales": submodales},
-                "cuadernos": cuadernos,
-            }
+    async def buscar_y_extraer_privada(self, tipo: str, rol, anio) -> dict:
+        """Busca la causa privada por Rit / Rol / Anio dentro de Mis Causas -> Civil y
+        extrae cabecera + cuadernos (mismo modal que la Consulta Unificada)."""
+        page = self._page
+        logger.info("Buscando causa privada %s-%s-%s", tipo, rol, anio)
+        try:
+            await self._ir_a_mis_causas_civil()
+            await self._activar_filtros()
+
+            try:
+                await page.select_option("#tipoMisCauCiv", value=tipo)
+            except Exception:
+                logger.warning("No se pudo seleccionar el tipo '%s' en #tipoMisCauCiv", tipo)
+            await page.fill("#rolMisCauCiv", str(rol))
+            await page.fill("#anhoMisCauCiv", str(anio))
+            # El filtro de Estado viene por defecto en "Tramitacion"; se limpia para no
+            # excluir causas en otros estados (archivadas, concluidas, etc.).
+            try:
+                await page.select_option("#estadoCausaMisCauCiv", [])
+            except Exception:
+                pass
+
+            await page.click("#btnConsultaMisCauCiv")
+            await page.wait_for_timeout(3500)
+
+            objetivo = f"{tipo}-{rol}-{anio}"
+            abierta = await page.evaluate(
+                """(objetivo) => {
+                    const norm = s => (s || '').replace(/\\s+/g, '').toUpperCase();
+                    const cell = Array.from(document.querySelectorAll('#tab3 td'))
+                        .find(td => norm(td.textContent).includes(norm(objetivo)));
+                    if (!cell) return null;
+                    const row = cell.closest('tr');
+                    const clickable = row.querySelector('a,button,i,img,span') || row.querySelector('td');
+                    clickable.click();
+                    return true;
+                }""",
+                objetivo,
+            )
+            if abierta is None:
+                logger.info("Causa privada %s no encontrada en Mis Causas", objetivo)
+                return {"encontrada": False}
+
+            try:
+                await page.wait_for_selector(f"#{self.MODAL_DETALLE}.in", state="visible", timeout=15000)
+            except Exception:
+                return {"encontrada": True, "error": "No se pudo abrir el detalle de la causa privada"}
+            await page.wait_for_timeout(800)
+
+            detalle = await self._extraer_detalle_de_modal(self.MODAL_DETALLE)
+            return {"encontrada": True, **detalle}
         finally:
             await page.wait_for_timeout(PAUSA_ENTRE_CONSULTAS_MS)

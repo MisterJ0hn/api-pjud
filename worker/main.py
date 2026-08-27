@@ -12,12 +12,18 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+from api.civil.cripto import descifrar
 from api.config import settings
 from api.db.models.causas import Causa
 from api.db.models.sync_job import SyncJob
 from api.db.session_async import AsyncSessionLocal
 from api.logging_config import configurar_logger
-from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionAsync
+from scraper.pjud_client_async import (
+    CausaNoEncontrada,
+    LoginPrivadoError,
+    PjudSessionAsync,
+    PjudSessionPrivada,
+)
 from worker.sync_civil import sincronizar_causa
 
 logger = configurar_logger("pjud.worker", "worker.log")
@@ -40,6 +46,7 @@ async def _barrer_jobs_huerfanos() -> None:
             job.estado = "error"
             job.error_mensaje = "Job huerfano: worker reiniciado a medio proceso"
             job.finalizado_en = datetime.now(timezone.utc)
+            _limpiar_credenciales(job)
             causa = await session.get(Causa, job.causa_id)
             if causa is not None and causa.estado_sync == "Sincronizando":
                 causa.estado_sync = "Error"
@@ -68,28 +75,55 @@ async def _tomar_siguiente_job() -> int | None:
         return job.id
 
 
+def _limpiar_credenciales(job: SyncJob) -> None:
+    """Borra las credenciales de PJUD de la fila apenas el job llega a un estado terminal.
+    En el camino de reintento (job vuelve a 'pendiente') se conservan."""
+    job.rut_cifrado = None
+    job.clave_cifrada = None
+    job.metodo_login = None
+
+
 async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
     async with AsyncSessionLocal() as session:
         job = await session.get(SyncJob, job_id)
         causa = await session.get(Causa, job.causa_id)
+
+        privada = job.rut_cifrado is not None
+        sesion_privada: PjudSessionPrivada | None = None
+
         try:
-            await sincronizar_causa(session, sesion_pjud, causa)
+            if privada:
+                rut = descifrar(job.rut_cifrado)
+                clave = descifrar(job.clave_cifrada)
+                sesion_privada = PjudSessionPrivada(
+                    rut, clave, job.metodo_login or PjudSessionPrivada.METODO_CLAVE_PJUD,
+                    headless=settings.playwright_headless,
+                )
+                await sesion_privada.iniciar()
+                await sincronizar_causa(session, sesion_privada, causa, privada=True)
+            else:
+                await sincronizar_causa(session, sesion_pjud, causa)
+
             causa.estado_sync = "Completo"
             causa.fecha_ultima_sincronizacion = datetime.now(timezone.utc)
             causa.ultimo_error = None
             job.estado = "completo"
             job.finalizado_en = datetime.now(timezone.utc)
+            _limpiar_credenciales(job)
             await session.commit()
             logger.info("Job %s (%s) completado", job.id, causa.rol_formateado)
-        except CausaNoEncontrada as exc:
+        except (CausaNoEncontrada, LoginPrivadoError) as exc:
             await session.rollback()
+            job = await session.get(SyncJob, job_id)
+            causa = await session.get(Causa, job.causa_id)
             causa.estado_sync = "Error"
             causa.ultimo_error = str(exc)
             job.estado = "error"
             job.error_mensaje = str(exc)
             job.finalizado_en = datetime.now(timezone.utc)
+            _limpiar_credenciales(job)
             await session.commit()
-            logger.warning("Job %s: causa no encontrada (%s)", job.id, exc)
+            logger.warning("Job %s: %s (%s)", job.id, type(exc).__name__, exc)
         except Exception as exc:
             await session.rollback()
             logger.exception("Job %s fallo", job.id)
@@ -104,7 +138,14 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
                 job.estado = "error"
                 job.error_mensaje = str(exc)
                 job.finalizado_en = datetime.now(timezone.utc)
+                _limpiar_credenciales(job)
             await session.commit()
+        finally:
+            if sesion_privada is not None:
+                try:
+                    await sesion_privada.cerrar()
+                except Exception:
+                    logger.exception("Error al cerrar la sesion privada del job %s", job_id)
 
 
 async def run() -> None:

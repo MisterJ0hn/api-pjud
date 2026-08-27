@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -6,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import Principal, obtener_principal
+from api.civil.cripto import cifrar
 from api.civil.repository import (
     buscar_causa,
     construir_causa_detalle,
@@ -20,6 +22,7 @@ from api.civil.schemas import (
     ConsultarCivilResponse,
     MovimientosRequest,
     MovimientosResponse,
+    SincronizarCivilRequest,
     SincronizarResponse,
 )
 from api.config import settings
@@ -31,13 +34,38 @@ router = APIRouter(tags=["civil"])
 
 COMPETENCIA = "civil"
 
+_RUT_RE = re.compile(r"^\d{7,8}-[\dkK]$")
+
+
+def _normalizar_credenciales(body: SincronizarCivilRequest) -> tuple[str, str, int] | None:
+    """Devuelve (rut, clave, metodo_login) si el request pide modo privado, o None si
+    es una sincronizacion publica. Valida que los tres campos vengan juntos y bien
+    formados; cualquier problema es un 400 'Error en campo [...]'."""
+    if body.rut is None and body.clave is None and body.metodo_login is None:
+        return None
+
+    if not body.rut:
+        raise CampoInvalidoError("rut")
+    if not body.clave:
+        raise CampoInvalidoError("clave")
+    if body.metodo_login not in (1, 2):
+        raise CampoInvalidoError("metodo_login")
+
+    rut = body.rut.strip().replace(".", "").replace(" ", "").upper()
+    if not _RUT_RE.match(rut):
+        raise CampoInvalidoError("rut")
+
+    return rut, body.clave, body.metodo_login
+
 
 @router.post("/sincronizar_civil", response_model=SincronizarResponse)
 async def sincronizar_civil(
-    body: CausaRequest,
+    body: SincronizarCivilRequest,
     principal: Principal = Depends(obtener_principal),
     session: AsyncSession = Depends(get_session),
 ):
+    credenciales = _normalizar_credenciales(body)
+
     causa = await obtener_o_crear_causa(
         session, COMPETENCIA, body.corte, body.tribunal, body.tipo, body.rol, body.anio
     )
@@ -52,7 +80,17 @@ async def sincronizar_civil(
     if not lock_obtenido:
         raise ConflictoSincronizacionError()
 
-    await encolar_sync_job(session, causa.id)
+    if credenciales is not None:
+        rut, clave, metodo_login = credenciales
+        await encolar_sync_job(
+            session,
+            causa.id,
+            rut_cifrado=cifrar(rut),
+            clave_cifrada=cifrar(clave),
+            metodo_login=metodo_login,
+        )
+    else:
+        await encolar_sync_job(session, causa.id)
     return SincronizarResponse()
 
 
