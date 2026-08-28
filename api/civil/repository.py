@@ -14,6 +14,7 @@ from api.civil.schemas import (
     ExhortoRolDestinoItem as ExhortoRolDestinoSchema,
     ExhortoRolItem,
     HistoriaAnexoItem,
+    HistoriaDocItem,
     HistoriaItem,
     InformacionReceptorItem,
     LitiganteItem,
@@ -32,6 +33,7 @@ from api.db.models.movimientos import (
     Litigante,
     MovimientoHistoria,
     MovimientoHistoriaAnexo,
+    MovimientoHistoriaDoc,
     Notificacion,
 )
 from api.db.models.sync_job import SyncJob
@@ -239,6 +241,13 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
     ).scalars().all()
     historia_items = []
     for h in historia_rows:
+        doc_rows = (
+            await session.execute(
+                select(MovimientoHistoriaDoc)
+                .where(MovimientoHistoriaDoc.movimiento_id == h.id)
+                .order_by(MovimientoHistoriaDoc.orden)
+            )
+        ).scalars().all()
         anexo_rows = (
             await session.execute(
                 select(MovimientoHistoriaAnexo)
@@ -249,7 +258,7 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
         historia_items.append(
             HistoriaItem(
                 folio=h.folio,
-                doc=doc_url(h.documento_id),
+                doc=[HistoriaDocItem(doc=doc_url(d.documento_id)) for d in doc_rows],
                 anexo=[
                     HistoriaAnexoItem(doc=doc_url(a.documento_id), fecha=a.fecha, referencia=a.referencia)
                     for a in anexo_rows

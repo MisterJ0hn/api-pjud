@@ -34,6 +34,7 @@ from api.db.models.movimientos import (
     Litigante,
     MovimientoHistoria,
     MovimientoHistoriaAnexo,
+    MovimientoHistoriaDoc,
     Notificacion,
 )
 from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionAsync, PjudSessionPrivada
@@ -132,13 +133,24 @@ async def _sincronizar_historia(
             session.add(existente)
             await session.flush()
 
+        # Un folio puede traer 0, 1 o varios documentos en la columna "Doc."; se guardan
+        # todos como filas de movimientos_historia_docs con orden estable.
         doc_urls = enlaces.get("Doc.") or []
         if doc_urls:
-            doc = await _obtener_o_descargar_documento(
-                session, sesion_pjud, causa.id, cuaderno.id, "historia", f"historia_folio{folio}",
-                rol_fmt, cuaderno.numero, doc_urls[0], hash_padre=h,
+            await session.execute(
+                delete(MovimientoHistoriaDoc).where(MovimientoHistoriaDoc.movimiento_id == existente.id)
             )
-            existente.documento_id = doc.id if doc else None
+            for i, url in enumerate(doc_urls, start=1):
+                clave = f"historia_folio{folio}" if i == 1 else f"historia_folio{folio}_doc{i}"
+                doc = await _obtener_o_descargar_documento(
+                    session, sesion_pjud, causa.id, cuaderno.id, "historia", clave,
+                    rol_fmt, cuaderno.numero, url, hash_padre=h,
+                )
+                session.add(
+                    MovimientoHistoriaDoc(
+                        movimiento_id=existente.id, documento_id=doc.id if doc else None, orden=i
+                    )
+                )
 
         foja_raw = (valores.get("Foja") or "").strip()
         existente.etapa = valores.get("Etapa")
@@ -149,12 +161,32 @@ async def _sincronizar_historia(
         existente.hash_contenido = h
         await session.flush()
 
-        # Anexos del folio -- estructura best-effort (ver docstring del modulo scraper):
-        # se guardan los documentos encontrados en la celda "Anexo" con orden estable,
-        # pero fecha/referencia quedan en None hasta validar el DOM real de un caso con
-        # anexos en Historia (el ejemplo usado durante el desarrollo no tenia ninguno).
+        # Anexos del folio. Dos formas en el HTML de PJUD:
+        #  (a) enlaces directos en la celda "Anexo"          -> enlaces["Anexo"].
+        #  (b) una carpeta que abre el popup "Anexo solicitud"; el scraper ya lo abrio y
+        #      dejo cada fila (doc/fecha/referencia) en fila["anexos_popup"].
+        anexos_popup = fila.get("anexos_popup") or []
         anexo_urls = enlaces.get("Anexo") or []
-        if anexo_urls:
+        if anexos_popup:
+            await session.execute(delete(MovimientoHistoriaAnexo).where(MovimientoHistoriaAnexo.movimiento_id == existente.id))
+            for i, a in enumerate(anexos_popup, start=1):
+                doc = None
+                if a.get("doc"):
+                    doc = await _obtener_o_descargar_documento(
+                        session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo",
+                        f"historia_folio{folio}_anexo{i}", rol_fmt, cuaderno.numero, a["doc"],
+                        referencia=a.get("referencia"), hash_padre=h,
+                    )
+                session.add(
+                    MovimientoHistoriaAnexo(
+                        movimiento_id=existente.id,
+                        documento_id=doc.id if doc else None,
+                        orden=i,
+                        fecha=a.get("fecha"),
+                        referencia=a.get("referencia"),
+                    )
+                )
+        elif anexo_urls:
             await session.execute(delete(MovimientoHistoriaAnexo).where(MovimientoHistoriaAnexo.movimiento_id == existente.id))
             for i, url in enumerate(anexo_urls, start=1):
                 doc = await _obtener_o_descargar_documento(

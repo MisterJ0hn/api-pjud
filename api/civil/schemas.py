@@ -91,9 +91,14 @@ class HistoriaAnexoItem(BaseModel):
     referencia: str | None = None
 
 
+class HistoriaDocItem(BaseModel):
+    doc: str | None = None
+
+
 class HistoriaItem(BaseModel):
     folio: int | None = None
-    doc: str | None = None
+    # Un folio puede traer 0, 1 o varios documentos en la columna "Doc.".
+    doc: list[HistoriaDocItem] = Field(default_factory=list)
     anexo: list[HistoriaAnexoItem] = Field(default_factory=list)
     etapa: str | None = None
     tramite: str | None = None

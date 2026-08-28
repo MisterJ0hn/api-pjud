@@ -10,6 +10,7 @@ from api.db.models.movimientos import (
     Litigante,
     MovimientoHistoria,
     MovimientoHistoriaAnexo,
+    MovimientoHistoriaDoc,
     Notificacion,
 )
 from api.db.models.sync_job import SyncJob
@@ -24,6 +25,7 @@ __all__ = [
     "Documento",
     "MovimientoHistoria",
     "MovimientoHistoriaAnexo",
+    "MovimientoHistoriaDoc",
     "Litigante",
     "Notificacion",
     "EscritoResolver",

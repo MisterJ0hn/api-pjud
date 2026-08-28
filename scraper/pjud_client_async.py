@@ -52,6 +52,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
         if (celdas.length === 0) return null;
         const valores = {};
         const enlaces = {};
+        const popups = {};
         celdas.forEach((td, i) => {
             const header = headers[i] || ('col' + i);
             valores[header] = td.textContent.trim();
@@ -67,12 +68,19 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
             });
             Array.from(td.querySelectorAll('a[href]')).forEach(a => {
                 const href = a.getAttribute('href');
-                if (!href || href.startsWith('#') || href.toLowerCase().startsWith('javascript:')) return;
+                if (!href || href.toLowerCase().startsWith('javascript:')) return;
+                if (href.startsWith('#')) {
+                    // Carpeta que abre un popup (p. ej. #modalAnexoSolicitudCivil en Historia).
+                    if (a.getAttribute('data-toggle') === 'modal') {
+                        (popups[header] = popups[header] || []).push(href);
+                    }
+                    return;
+                }
                 urls.push(new URL(href, location.href).toString());
             });
             if (urls.length) enlaces[header] = urls;
         });
-        return {valores, enlaces};
+        return {valores, enlaces, popups};
     }).filter(f => f !== null);
     return {headers, filas};
 })"""
@@ -123,6 +131,10 @@ JS_CERRAR_MODAL = """(modalId) => {
     const cerrar = modal.querySelector('.close, button.close, [data-dismiss="modal"]');
     if (cerrar) cerrar.click();
 }"""
+
+
+def _es_seccion_historia(nombre: str) -> bool:
+    return (nombre or "").strip().lower().startswith("historia")
 
 
 class CausaNoEncontrada(Exception):
@@ -226,8 +238,78 @@ class _PjudModalScraper:
             await page.wait_for_timeout(500)
             pane_id = href[1:]
             tablas = await self._extraer_filas_con_enlaces(f"#{pane_id}")
-            secciones[tab["nombre"]] = tablas[0] if tablas else {"headers": [], "filas": []}
+            seccion = tablas[0] if tablas else {"headers": [], "filas": []}
+            if _es_seccion_historia(tab["nombre"]):
+                await self._extraer_anexos_popup_historia(pane_id, seccion)
+            secciones[tab["nombre"]] = seccion
         return secciones
+
+    async def _extraer_anexos_popup_historia(self, pane_id: str, seccion: dict) -> None:
+        """En Historia la columna "Anexo" puede ser una carpeta que abre el popup
+        `#modalAnexoSolicitudCivil` (carga por AJAX una tabla Doc./Fecha/Referencia).
+        Por cada fila que la tenga, abre el popup, vuelca sus filas en
+        `fila["anexos_popup"] = [{"doc": url|None, "fecha": str, "referencia": str}, ...]`
+        y resume el contenido en `valores["Anexo"]` para que el hash de la fila (worker)
+        sea sensible a cambios en los anexos."""
+        page = self._page
+        filas = seccion.get("filas", [])
+        for idx, fila in enumerate(filas):
+            popups = fila.get("popups") or {}
+            col_anexo = next(
+                (col for col, lst in popups.items() if "#modalAnexoSolicitudCivil" in lst), None
+            )
+            if col_anexo is None:
+                continue
+            # Localiza el <a> de ESTA fila (mismo criterio de filas que
+            # JS_EXTRAER_FILAS_CON_ENLACES: filas de tbody con >= 1 <td>).
+            clicked = await page.evaluate(
+                """([paneId, idx]) => {
+                    const cont = document.getElementById(paneId);
+                    const t = cont && cont.querySelector('table');
+                    if (!t) return false;
+                    const rows = t.querySelectorAll('tbody tr').length
+                        ? t.querySelectorAll('tbody tr') : t.querySelectorAll('tr');
+                    const conCeldas = Array.from(rows).filter(tr => tr.querySelectorAll('td').length);
+                    const tr = conCeldas[idx];
+                    if (!tr) return false;
+                    const a = tr.querySelector('a[data-toggle="modal"][href="#modalAnexoSolicitudCivil"]');
+                    if (!a) return false;
+                    a.click();
+                    return true;
+                }""",
+                [pane_id, idx],
+            )
+            if not clicked:
+                continue
+            await page.wait_for_timeout(1600)  # el contenido del popup carga por AJAX
+            tablas = await self._extraer_filas_con_enlaces("#modalAnexoSolicitudCivil")
+            popup = tablas[0] if tablas else {"filas": []}
+            anexos = []
+            for pf in popup.get("filas", []):
+                v = pf.get("valores", {})
+                docs = (pf.get("enlaces") or {}).get("Doc.") or []
+                anexos.append(
+                    {
+                        "doc": docs[0] if docs else None,
+                        "fecha": v.get("Fecha"),
+                        "referencia": v.get("Referencia"),
+                    }
+                )
+            fila["anexos_popup"] = anexos
+            # Resume el popup en la celda de origen para que el hash de la fila (worker)
+            # detecte altas/bajas de anexos en re-sincronizaciones.
+            fila.setdefault("valores", {})[col_anexo] = " | ".join(
+                f"{a.get('fecha') or ''}~{a.get('referencia') or ''}" for a in anexos
+            )
+            await page.evaluate(
+                """() => {
+                    const m = document.getElementById('modalAnexoSolicitudCivil');
+                    if (!m) return;
+                    const c = m.querySelector('.close, button.close, [data-dismiss="modal"]');
+                    if (c) c.click();
+                }"""
+            )
+            await page.wait_for_timeout(300)
 
     async def _extraer_detalle_de_modal(self, modal_id: str) -> dict:
         """Con el modal de detalle ya abierto (`modal_id`), extrae cabecera + cuadernos y

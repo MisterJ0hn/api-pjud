@@ -171,7 +171,8 @@ Response 200:
     "historia":[
         {
             "folio": 1,
-            "doc":"https://api-pjud.temposoft.cl/public/historia_folio1_.pdf",
+            // "doc" es un array: 0, 1 o varios documentos por folio (columna "Doc.").
+            "doc": [],
             "anexo": [],
             "etapa":"Mandamiento",
             "tramite":"Actuación Receptor",
@@ -181,7 +182,10 @@ Response 200:
         },
         {
             "folio": 2,
-            "doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf",
+            "doc":[
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf"},
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_doc2_.pdf"}
+            ],
             "anexo": [
                 {
                     "doc":"https://api-pjud.temposoft.cl/public/historia_anexo1_folio2_.pdf",

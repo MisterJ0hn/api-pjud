@@ -13,7 +13,6 @@ class MovimientoHistoria(Base):
         Integer, ForeignKey("cuadernos.id", ondelete="CASCADE"), nullable=False, index=True
     )
     folio: Mapped[int] = mapped_column(Integer, nullable=False)
-    documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos.id"), nullable=True)
     etapa: Mapped[str | None] = mapped_column(String(300), nullable=True)
     tramite: Mapped[str | None] = mapped_column(String(300), nullable=True)
     descripcion_tramite: Mapped[str | None] = mapped_column(String(1000), nullable=True)
@@ -24,8 +23,28 @@ class MovimientoHistoria(Base):
     anexos: Mapped[list["MovimientoHistoriaAnexo"]] = relationship(
         back_populates="movimiento", cascade="all, delete-orphan"
     )
+    docs: Mapped[list["MovimientoHistoriaDoc"]] = relationship(
+        back_populates="movimiento",
+        cascade="all, delete-orphan",
+        order_by="MovimientoHistoriaDoc.orden",
+    )
 
     __table_args__ = (UniqueConstraint("cuaderno_id", "folio", name="uq_historia_cuaderno_folio"),)
+
+
+class MovimientoHistoriaDoc(Base):
+    __tablename__ = "movimientos_historia_docs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    movimiento_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("movimientos_historia.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos.id"), nullable=True)
+    orden: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    movimiento: Mapped["MovimientoHistoria"] = relationship(back_populates="docs")
+
+    __table_args__ = (UniqueConstraint("movimiento_id", "orden", name="uq_historia_doc_movimiento_orden"),)
 
 
 class MovimientoHistoriaAnexo(Base):
