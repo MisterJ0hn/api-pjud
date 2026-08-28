@@ -19,7 +19,7 @@ nuevo una vez que cambia (ej. a "Efectuada").
 import logging
 import unicodedata
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -119,13 +119,28 @@ async def _sincronizar_historia(
         folio = int(folio_raw)
         h = hash_fila(valores)
 
+        doc_urls = enlaces.get("Doc.") or []
+
         existente = (
             await session.execute(
                 select(MovimientoHistoria).where(MovimientoHistoria.cuaderno_id == cuaderno.id, MovimientoHistoria.folio == folio)
             )
         ).scalar_one_or_none()
         if existente is not None and existente.hash_contenido == h:
-            continue  # sin cambios: no se toca la BD ni se llama a PJUD por su documento
+            # Aunque el texto de la fila no cambio, reprocesa si en BD faltan documentos
+            # del folio (p. ej. datos de una version que solo guardaba el primero).
+            n_docs = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(MovimientoHistoriaDoc)
+                    .where(MovimientoHistoriaDoc.movimiento_id == existente.id)
+                )
+            ).scalar_one()
+            if n_docs == len(doc_urls):
+                continue  # sin cambios y con todos los documentos ya guardados
+            logger.info(
+                "Folio %s: %d/%d documentos en BD, se recompletan", folio, n_docs, len(doc_urls)
+            )
 
         hubo_cambios = True
         if existente is None:
@@ -133,9 +148,9 @@ async def _sincronizar_historia(
             session.add(existente)
             await session.flush()
 
-        # Un folio puede traer 0, 1 o varios documentos en la columna "Doc."; se guardan
-        # todos como filas de movimientos_historia_docs con orden estable.
-        doc_urls = enlaces.get("Doc.") or []
+        # Un folio puede traer 0, 1 o varios documentos en la columna "Doc." (p. ej. el
+        # escrito + su certificado de envio); se guardan todos como filas de
+        # movimientos_historia_docs con orden estable.
         if doc_urls:
             await session.execute(
                 delete(MovimientoHistoriaDoc).where(MovimientoHistoriaDoc.movimiento_id == existente.id)
