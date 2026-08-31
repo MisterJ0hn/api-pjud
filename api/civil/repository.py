@@ -237,7 +237,7 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
         await session.execute(
             select(MovimientoHistoria)
             .where(MovimientoHistoria.cuaderno_id == cuaderno.id)
-            .order_by(MovimientoHistoria.folio.nulls_last(), MovimientoHistoria.id)
+            .order_by(MovimientoHistoria.orden, MovimientoHistoria.id)
         )
     ).scalars().all()
     historia_items = []

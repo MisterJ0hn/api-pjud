@@ -20,6 +20,10 @@ class MovimientoHistoria(Base):
     # Parte numerica del folio (33, o 6 para "[6E]"); solo para ordenar. Nullable por si
     # aparece un formato de folio que no sepamos parsear.
     folio: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Posicion de la fila en la tabla Historia tal cual la renderiza PJUD (folios
+    # descendentes con los bloques de exhorto intercalados). Es el unico criterio de
+    # orden fiable; se reescribe en cada sync.
+    orden: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     etapa: Mapped[str | None] = mapped_column(String(300), nullable=True)
     tramite: Mapped[str | None] = mapped_column(String(300), nullable=True)
     descripcion_tramite: Mapped[str | None] = mapped_column(String(1000), nullable=True)
@@ -37,24 +41,15 @@ class MovimientoHistoria(Base):
     )
 
     __table_args__ = (
-        # Folios normales: siguen teniendo clave natural (cuaderno, folio) -> una fila por
-        # folio, se hace UPDATE cuando cambia el contenido. Indice parcial: excluye los
-        # "[NE]" de exhorto (que si pueden repetirse dentro del cuaderno).
+        # Folios normales: clave natural (cuaderno, folio) -> una fila por folio, se hace
+        # UPDATE cuando cambia el contenido. Indice parcial: excluye los "[NE]" de exhorto
+        # (que pueden repetirse dentro del cuaderno y se reemplazan enteros cada sync).
         Index(
             "uq_historia_cuaderno_folio",
             "cuaderno_id",
             "folio",
             unique=True,
             postgresql_where=text("folio_texto NOT LIKE '[%'"),
-        ),
-        # Filas de exhorto ("[NE]"): sin clave estable en el HTML (un mismo "[6E]" puede
-        # venir de dos exhortos distintos), asi que se identifican por contenido -- append
-        # -only, igual que escritos_resolver / notificaciones.
-        UniqueConstraint(
-            "cuaderno_id",
-            "folio_texto",
-            "hash_contenido",
-            name="uq_historia_cuaderno_foliotexto_hash",
         ),
     )
 

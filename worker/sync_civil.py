@@ -124,11 +124,133 @@ async def _obtener_o_descargar_documento(
     return documento
 
 
+def _asignar_campos_historia(mov: MovimientoHistoria, valores: dict) -> None:
+    foja_raw = (valores.get("Foja") or "").strip()
+    mov.etapa = valores.get("Etapa")
+    mov.tramite = valores.get("Trámite")
+    mov.descripcion_tramite = valores.get("Desc. Trámite")
+    mov.fecha_tramite = valores.get("Fec. Trámite")
+    mov.foja = int(foja_raw) if foja_raw.isdigit() else None
+
+
+async def _persistir_docs_anexos_historia(
+    session: AsyncSession,
+    sesion_pjud: PjudSessionAsync,
+    causa: Causa,
+    cuaderno: Cuaderno,
+    mov: MovimientoHistoria,
+    fila: dict,
+    enlaces: dict,
+    clave_base: str,
+    rol_fmt: str,
+    h: str,
+) -> None:
+    """(Re)crea las filas movimientos_historia_docs / _anexos del folio. Las descargas
+    van por `clave_logica` (idempotencia real): si el documento ya existe no se vuelve a
+    pedir a PJUD, asi que borrar+reinsertar estas filas no tiene costo de red."""
+    # Un folio puede traer 0, 1 o varios documentos en la columna "Doc." (p. ej. el
+    # escrito + su certificado de envio); se guardan todos con orden estable.
+    doc_urls = enlaces.get("Doc.") or []
+    if doc_urls:
+        await session.execute(
+            delete(MovimientoHistoriaDoc).where(MovimientoHistoriaDoc.movimiento_id == mov.id)
+        )
+        for i, url in enumerate(doc_urls, start=1):
+            clave = clave_base if i == 1 else f"{clave_base}_doc{i}"
+            doc = await _obtener_o_descargar_documento(
+                session, sesion_pjud, causa.id, cuaderno.id, "historia", clave,
+                rol_fmt, cuaderno.numero, url, hash_padre=h,
+            )
+            session.add(
+                MovimientoHistoriaDoc(
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i
+                )
+            )
+
+    # Anexos del folio. Dos formas en el HTML de PJUD:
+    #  (a) enlaces directos en la celda "Anexo"          -> enlaces["Anexo"].
+    #  (b) una carpeta que abre el popup "Anexo solicitud"; el scraper ya lo abrio y
+    #      dejo cada fila (doc/fecha/referencia) en fila["anexos_popup"].
+    anexos_popup = fila.get("anexos_popup") or []
+    anexo_urls = enlaces.get("Anexo") or []
+    if anexos_popup:
+        await session.execute(
+            delete(MovimientoHistoriaAnexo).where(MovimientoHistoriaAnexo.movimiento_id == mov.id)
+        )
+        for i, a in enumerate(anexos_popup, start=1):
+            doc = None
+            if a.get("doc"):
+                doc = await _obtener_o_descargar_documento(
+                    session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo",
+                    f"{clave_base}_anexo{i}", rol_fmt, cuaderno.numero, a["doc"],
+                    referencia=a.get("referencia"), hash_padre=h,
+                )
+            session.add(
+                MovimientoHistoriaAnexo(
+                    movimiento_id=mov.id,
+                    documento_id=doc.id if doc else None,
+                    orden=i,
+                    fecha=a.get("fecha"),
+                    referencia=a.get("referencia"),
+                )
+            )
+    elif anexo_urls:
+        await session.execute(
+            delete(MovimientoHistoriaAnexo).where(MovimientoHistoriaAnexo.movimiento_id == mov.id)
+        )
+        for i, url in enumerate(anexo_urls, start=1):
+            doc = await _obtener_o_descargar_documento(
+                session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo", f"{clave_base}_anexo{i}",
+                rol_fmt, cuaderno.numero, url,
+            )
+            session.add(
+                MovimientoHistoriaAnexo(movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i)
+            )
+
+
 async def _sincronizar_historia(
     session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict, rol_fmt: str
 ) -> bool:
+    """La tabla Historia mezcla, en un orden que solo PJUD conoce, los folios del cuaderno
+    (enteros, descendentes) con bloques de movimientos de exhorto ("[NE]", intercalados
+    justo despues del folio que los precede). Se persiste la posicion tal cual
+    (`orden` = indice de fila) y el repository ordena por ella.
+
+    - Folios normales: clave natural (cuaderno, folio) -> INSERT/UPDATE, se reusa la fila.
+    - Filas de exhorto: no tienen clave estable en el HTML (un mismo "[2E] Ingreso
+      Exhorto" puede ser identico entre dos exhortos), asi que se reemplazan por completo
+      cada sync. Las descargas siguen siendo idempotentes por `clave_logica`
+      (`historia_exh{ancla}_{n}`), asi que el borrar+reinsertar no re-descarga nada.
+    """
+    filas = tabla.get("filas", [])
+
+    # Snapshot de las filas de exhorto ya guardadas (para detectar cambios) + borrado:
+    # se reconstruyen enteras mas abajo. Se compara como multiset (dos "[2E] Ingreso
+    # Exhorto" de exhortos distintos pueden tener contenido identico).
+    exhorto_previas = sorted(
+        tuple(r)
+        for r in (
+            await session.execute(
+                select(MovimientoHistoria.folio_texto, MovimientoHistoria.hash_contenido).where(
+                    MovimientoHistoria.cuaderno_id == cuaderno.id,
+                    MovimientoHistoria.folio_texto.like("[%"),
+                )
+            )
+        ).all()
+    )
+    await session.execute(
+        delete(MovimientoHistoria).where(
+            MovimientoHistoria.cuaderno_id == cuaderno.id,
+            MovimientoHistoria.folio_texto.like("[%"),
+        )
+    )
+    await session.commit()
+
     hubo_cambios = False
-    for fila in tabla.get("filas", []):
+    exhorto_nuevas: list[tuple[str, str]] = []
+    ultimo_folio_normal: int | None = None
+
+    for idx, fila in enumerate(filas):
         valores = fila["valores"]
         enlaces = fila.get("enlaces", {})
         folio_parseado = _parsear_folio(valores.get("Folio") or "")
@@ -138,24 +260,40 @@ async def _sincronizar_historia(
         folio_texto, folio, es_exhorto = folio_parseado
         h = hash_fila(valores)
 
-        doc_urls = enlaces.get("Doc.") or []
-
         if es_exhorto:
-            # Los "[NE]" no tienen clave estable (un mismo "[6E]" puede venir de dos
-            # exhortos distintos): se identifican por contenido y son append-only.
-            filtro = (
-                MovimientoHistoria.cuaderno_id == cuaderno.id,
-                MovimientoHistoria.folio_texto == folio_texto,
-                MovimientoHistoria.hash_contenido == h,
+            exhorto_nuevas.append((folio_texto, h))
+            # Ancla = folio normal inmediatamente anterior; identifica el exhorto (dos
+            # exhortos distintos rara vez comparten el mismo folio previo) y lo ubica en
+            # el orden. `folio` (el N de "[NE]") es unico dentro de un mismo bloque.
+            ancla = ultimo_folio_normal if ultimo_folio_normal is not None else 0
+            clave_base = f"historia_exh{ancla}_{folio}"
+            mov = MovimientoHistoria(
+                cuaderno_id=cuaderno.id,
+                folio=folio,
+                folio_texto=folio_texto,
+                hash_contenido=h,
+                orden=idx,
             )
-        else:
-            filtro = (
-                MovimientoHistoria.cuaderno_id == cuaderno.id,
-                MovimientoHistoria.folio_texto == folio_texto,
+            _asignar_campos_historia(mov, valores)
+            session.add(mov)
+            await session.flush()
+            await _persistir_docs_anexos_historia(
+                session, sesion_pjud, causa, cuaderno, mov, fila, enlaces, clave_base, rol_fmt, h
             )
+            await session.commit()
+            continue
+
+        ultimo_folio_normal = folio
+
         existente = (
-            await session.execute(select(MovimientoHistoria).where(*filtro))
+            await session.execute(
+                select(MovimientoHistoria).where(
+                    MovimientoHistoria.cuaderno_id == cuaderno.id,
+                    MovimientoHistoria.folio_texto == folio_texto,
+                )
+            )
         ).scalar_one_or_none()
+
         if existente is not None and existente.hash_contenido == h:
             # Aunque el texto de la fila no cambio, reprocesa si en BD faltan documentos
             # del folio (p. ej. datos de una version que solo guardaba el primero).
@@ -166,89 +304,39 @@ async def _sincronizar_historia(
                     .where(MovimientoHistoriaDoc.movimiento_id == existente.id)
                 )
             ).scalar_one()
-            if n_docs == len(doc_urls):
-                continue  # sin cambios y con todos los documentos ya guardados
+            if n_docs == len(enlaces.get("Doc.") or []):
+                # Sin cambios de contenido; solo puede haberse movido de posicion (PJUD
+                # agrego folios/exhortos arriba). Eso no es un "cambio" que amerite
+                # re-descargar nada.
+                if existente.orden != idx:
+                    existente.orden = idx
+                    await session.commit()
+                continue
             logger.info(
-                "Folio %s: %d/%d documentos en BD, se recompletan", folio_texto, n_docs, len(doc_urls)
+                "Folio %s: %d/%d documentos en BD, se recompletan",
+                folio_texto, n_docs, len(enlaces.get("Doc.") or []),
             )
 
         hubo_cambios = True
         if existente is None:
             existente = MovimientoHistoria(
-                cuaderno_id=cuaderno.id, folio=folio, folio_texto=folio_texto, hash_contenido=h
+                cuaderno_id=cuaderno.id, folio=folio, folio_texto=folio_texto, hash_contenido=h, orden=idx
             )
             session.add(existente)
             await session.flush()
 
-        # Clave logica base de los documentos del folio. Para los "[NE]" de exhorto se
-        # incluye el hash de la fila porque el folio puede repetirse (y colisionaria en
-        # disco con el folio N "real").
-        clave_base = f"historia_folioE{folio}_{h[:10]}" if es_exhorto else f"historia_folio{folio}"
-
-        # Un folio puede traer 0, 1 o varios documentos en la columna "Doc." (p. ej. el
-        # escrito + su certificado de envio); se guardan todos como filas de
-        # movimientos_historia_docs con orden estable.
-        if doc_urls:
-            await session.execute(
-                delete(MovimientoHistoriaDoc).where(MovimientoHistoriaDoc.movimiento_id == existente.id)
-            )
-            for i, url in enumerate(doc_urls, start=1):
-                clave = clave_base if i == 1 else f"{clave_base}_doc{i}"
-                doc = await _obtener_o_descargar_documento(
-                    session, sesion_pjud, causa.id, cuaderno.id, "historia", clave,
-                    rol_fmt, cuaderno.numero, url, hash_padre=h,
-                )
-                session.add(
-                    MovimientoHistoriaDoc(
-                        movimiento_id=existente.id, documento_id=doc.id if doc else None, orden=i
-                    )
-                )
-
-        foja_raw = (valores.get("Foja") or "").strip()
-        existente.etapa = valores.get("Etapa")
-        existente.tramite = valores.get("Trámite")
-        existente.descripcion_tramite = valores.get("Desc. Trámite")
-        existente.fecha_tramite = valores.get("Fec. Trámite")
-        existente.foja = int(foja_raw) if foja_raw.isdigit() else None
+        existente.orden = idx
+        _asignar_campos_historia(existente, valores)
         existente.hash_contenido = h
         await session.flush()
-
-        # Anexos del folio. Dos formas en el HTML de PJUD:
-        #  (a) enlaces directos en la celda "Anexo"          -> enlaces["Anexo"].
-        #  (b) una carpeta que abre el popup "Anexo solicitud"; el scraper ya lo abrio y
-        #      dejo cada fila (doc/fecha/referencia) en fila["anexos_popup"].
-        anexos_popup = fila.get("anexos_popup") or []
-        anexo_urls = enlaces.get("Anexo") or []
-        if anexos_popup:
-            await session.execute(delete(MovimientoHistoriaAnexo).where(MovimientoHistoriaAnexo.movimiento_id == existente.id))
-            for i, a in enumerate(anexos_popup, start=1):
-                doc = None
-                if a.get("doc"):
-                    doc = await _obtener_o_descargar_documento(
-                        session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo",
-                        f"{clave_base}_anexo{i}", rol_fmt, cuaderno.numero, a["doc"],
-                        referencia=a.get("referencia"), hash_padre=h,
-                    )
-                session.add(
-                    MovimientoHistoriaAnexo(
-                        movimiento_id=existente.id,
-                        documento_id=doc.id if doc else None,
-                        orden=i,
-                        fecha=a.get("fecha"),
-                        referencia=a.get("referencia"),
-                    )
-                )
-        elif anexo_urls:
-            await session.execute(delete(MovimientoHistoriaAnexo).where(MovimientoHistoriaAnexo.movimiento_id == existente.id))
-            for i, url in enumerate(anexo_urls, start=1):
-                doc = await _obtener_o_descargar_documento(
-                    session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo", f"{clave_base}_anexo{i}",
-                    rol_fmt, cuaderno.numero, url,
-                )
-                session.add(
-                    MovimientoHistoriaAnexo(movimiento_id=existente.id, documento_id=doc.id if doc else None, orden=i)
-                )
+        await _persistir_docs_anexos_historia(
+            session, sesion_pjud, causa, cuaderno, existente, fila, enlaces,
+            f"historia_folio{folio}", rol_fmt, h,
+        )
         await session.commit()
+
+    if sorted(exhorto_nuevas) != exhorto_previas:
+        hubo_cambios = True
     return hubo_cambios
 
 
