@@ -7,10 +7,11 @@ Uso: python -m worker.main
 """
 
 import asyncio
+import functools
 import random
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from api.civil.cripto import descifrar
 from api.config import settings
@@ -33,6 +34,18 @@ PACING_ENTRE_JOBS_S = 7
 MAX_INTENTOS = 2
 
 
+async def _reportar_progreso(causa_id, texto: str) -> None:
+    """Escribe el paso actual de la sincronizacion en `causas.sync_detalle`, en una
+    sesion corta e independiente de la transaccion del job (solo toca esa columna).
+    Se expone en `consultar_civil` como `detalle_estado`."""
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(update(Causa).where(Causa.id == causa_id).values(sync_detalle=texto))
+            await session.commit()
+    except Exception:
+        logger.exception("No se pudo registrar el progreso '%s'", texto)
+
+
 async def _barrer_jobs_huerfanos() -> None:
     """Al arrancar, libera jobs que quedaron 'en_progreso' porque el worker murio a
     medio proceso -- sin esto, la causa quedaria bloqueada (409 permanente) hasta que
@@ -50,6 +63,7 @@ async def _barrer_jobs_huerfanos() -> None:
             causa = await session.get(Causa, job.causa_id)
             if causa is not None and causa.estado_sync == "Sincronizando":
                 causa.estado_sync = "Error"
+                causa.sync_detalle = None
         await session.commit()
         if huerfanos:
             logger.warning("Liberados %d jobs huerfanos", len(huerfanos))
@@ -90,6 +104,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
 
         privada = job.rut_cifrado is not None
         sesion_privada: PjudSessionPrivada | None = None
+        progreso = functools.partial(_reportar_progreso, causa.id)
 
         try:
             if privada:
@@ -99,14 +114,18 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
                     rut, clave, job.metodo_login or PjudSessionPrivada.METODO_CLAVE_PJUD,
                     headless=settings.playwright_headless,
                 )
+                await progreso("Iniciando sesion en la Oficina Judicial Virtual")
                 await sesion_privada.iniciar()
-                await sincronizar_causa(session, sesion_privada, causa, privada=True)
+                await sincronizar_causa(session, sesion_privada, causa, privada=True, progreso=progreso)
             else:
-                await sincronizar_causa(session, sesion_pjud, causa)
+                await sincronizar_causa(session, sesion_pjud, causa, progreso=progreso)
 
             causa.estado_sync = "Completo"
             causa.fecha_ultima_sincronizacion = datetime.now(timezone.utc)
             causa.ultimo_error = None
+            # UPDATE explicito: `_reportar_progreso` escribio sync_detalle desde otra
+            # sesion, asi que el ORM de esta no detecta el cambio a None.
+            await session.execute(update(Causa).where(Causa.id == causa.id).values(sync_detalle=None))
             job.estado = "completo"
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)

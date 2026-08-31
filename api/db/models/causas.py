@@ -33,6 +33,7 @@ class Causa(Base):
     tribunal_nombre: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     estado_sync: Mapped[str] = mapped_column(String(15), nullable=False, default="Pendiente")
+    sync_detalle: Mapped[str | None] = mapped_column(String(300), nullable=True)
     sync_iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     fecha_ultima_sincronizacion: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ultimo_error: Mapped[str | None] = mapped_column(String(2000), nullable=True)

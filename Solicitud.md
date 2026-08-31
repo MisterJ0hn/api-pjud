@@ -46,9 +46,13 @@ Response 409
 {
     "exito": false,
     "code": 409,
-    "mensaje": "Conflicto"
-    
+    "mensaje": "Conflicto",
+    "motivo": "intervalo_minimo" | "sincronizacion_en_curso",
+    "detalle": "texto explicando el conflicto",
+    "reintentar_en": "2026-08-28T20:28:07.915709+00:00"  // ISO 8601, cuándo se puede reintentar
 }
+// motivo=intervalo_minimo: la causa se sincronizó hace menos de SYNC_MIN_INTERVAL_MINUTES (30 por defecto).
+// motivo=sincronizacion_en_curso: ya hay una sincronización con lock vigente (SYNC_LOCK_TIMEOUT_MINUTES, 15 por defecto).
 Response 400
 {
     "exito": false,
@@ -73,6 +77,7 @@ Response 200:
     {
         "identificador": [GUID],
         "estado": "Sincronizando"|"Completo",
+        "detalle_estado": "Obteniendo historia de cuaderno Principal", // paso actual mientras estado=Sincronizando; null cuando estado=Completo
         "fecha_ultima_sincronizacion": "2026-08-10",
         "rol": "C-11247-2026", #ROL
         "fecha_ingreso":"30/01/2026", #F. Ing.

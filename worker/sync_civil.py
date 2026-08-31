@@ -347,16 +347,28 @@ async def sincronizar_causa(
     causa: Causa,
     *,
     privada: bool = False,
+    progreso=None,
 ) -> None:
+    """`progreso`: callback opcional `async (texto: str) -> None` para reportar el paso
+    actual (se expone en `consultar_civil` como `detalle_estado`). Granularidad por
+    seccion, no por documento."""
+
+    async def _rep(texto: str) -> None:
+        if progreso is not None:
+            await progreso(texto)
+
     rol_fmt = causa.rol_formateado
     if privada:
         # Causa privada: ya se busca dentro de "Mis Causas" -> "Civil" filtrando solo por
         # Rit / Rol / Anio (no hay Corte ni Juzgado). El detalle extraido tiene la misma
         # forma que el de la Consulta Unificada, asi que el resto del flujo no cambia.
-        resultado = await sesion_pjud.buscar_y_extraer_privada(causa.tipo, causa.rol, causa.anio)
+        resultado = await sesion_pjud.buscar_y_extraer_privada(
+            causa.tipo, causa.rol, causa.anio, progreso=progreso
+        )
     else:
         resultado = await sesion_pjud.buscar_y_extraer(
-            causa.competencia, str(causa.corte), str(causa.tribunal), causa.tipo, causa.rol, causa.anio
+            causa.competencia, str(causa.corte), str(causa.tribunal), causa.tipo, causa.rol, causa.anio,
+            progreso=progreso,
         )
 
     if not resultado.get("encontrada"):
@@ -364,6 +376,7 @@ async def sincronizar_causa(
     if resultado.get("error"):
         raise RuntimeError(resultado["error"])
 
+    await _rep("Guardando cabecera")
     cabecera = resultado["cabecera"]
     campos = cabecera.get("campos", {})
     causa.fecha_ingreso = campos.get("F. Ing.") or causa.fecha_ingreso
@@ -392,20 +405,27 @@ async def sincronizar_causa(
 
         secciones = c.get("secciones", {})
         if "Historia" in secciones:
+            await _rep(f"Guardando historia de cuaderno {cuaderno.nombre}")
             if await _sincronizar_historia(session, sesion_pjud, causa, cuaderno, secciones["Historia"], rol_fmt):
                 hubo_cambios = True
         if "Litigantes" in secciones:
+            await _rep(f"Guardando litigantes de cuaderno {cuaderno.nombre}")
             await _reemplazar_litigantes(session, cuaderno, secciones["Litigantes"])
         if "Notificaciones" in secciones:
+            await _rep(f"Guardando notificaciones de cuaderno {cuaderno.nombre}")
             await _reemplazar_notificaciones(session, cuaderno, secciones["Notificaciones"])
         if "Escritos por Resolver" in secciones:
+            await _rep(f"Guardando escritos por resolver de cuaderno {cuaderno.nombre}")
             if await _sincronizar_escritos_resolver(session, sesion_pjud, causa, cuaderno, secciones["Escritos por Resolver"], rol_fmt):
                 hubo_cambios = True
         if "Exhortos" in secciones:
+            await _rep(f"Guardando exhortos de cuaderno {cuaderno.nombre}")
             if await _sincronizar_exhortos(session, sesion_pjud, causa, cuaderno, secciones["Exhortos"], rol_fmt):
                 hubo_cambios = True
 
     # --- Cabecera: anexos_causa, informacion_receptor ----------------------------
+    if cabecera.get("submodales"):
+        await _rep("Guardando anexos de la causa")
     for sub in cabecera.get("submodales", {}).get("Anexos de la causa", {}).get("filas", []):
         v = sub["valores"]
         referencia, fecha = v.get("Referencia"), v.get("Fecha")
@@ -456,6 +476,8 @@ async def sincronizar_causa(
     # texto_demanda y certificado_envio se tratan como inmutables una vez obtenidos;
     # ebook se reintenta solo si algo mas en la causa cambio en esta sincronizacion
     # (ver tabla de politicas de descarga en el plan de diseno).
+    if cabecera.get("descargas"):
+        await _rep("Descargando documentos de la causa")
     for d in cabecera.get("descargas", []):
         categoria = CATEGORIAS_CABECERA.get(_normalizar(d["label"]))
         if categoria is None:

@@ -196,6 +196,7 @@ async def construir_causa_detalle(session: AsyncSession, causa: Causa) -> CausaD
     return CausaDetalle(
         identificador=str(causa.id),
         estado=estado_expuesto,
+        detalle_estado=(None if estado_expuesto == CAMPO_ESTADO_COMPLETO else causa.sync_detalle),
         fecha_ultima_sincronizacion=(
             causa.fecha_ultima_sincronizacion.date().isoformat() if causa.fecha_ultima_sincronizacion else None
         ),

@@ -154,6 +154,17 @@ class _PjudModalScraper:
 
     _page = None
     _context = None
+    # Callback opcional `async (texto: str) -> None` para reportar el paso actual de la
+    # extraccion (lo setea el worker por job; ver worker/main.py).
+    _progreso = None
+
+    async def _reportar(self, texto: str) -> None:
+        if self._progreso is None:
+            return
+        try:
+            await self._progreso(texto)
+        except Exception:
+            logger.exception("Error al reportar progreso '%s'", texto)
 
     async def descargar_bytes(self, url: str) -> tuple[str, bytes] | None:
         """Descarga una URL de PJUD y valida que sea realmente un documento (el sitio
@@ -213,7 +224,7 @@ class _PjudModalScraper:
         await page.wait_for_timeout(300)
         return tablas[0] if tablas else {"headers": [], "filas": []}
 
-    async def _extraer_cuaderno_actual(self, modal_id: str) -> dict:
+    async def _extraer_cuaderno_actual(self, modal_id: str, cuaderno_nombre: str = "Principal") -> dict:
         page = self._page
         tabs = await page.evaluate(
             """(modalId) => {
@@ -231,6 +242,7 @@ class _PjudModalScraper:
             href = tab["href"]
             if not href or not href.startswith("#"):
                 continue
+            await self._reportar(f"Obteniendo {tab['nombre'].strip().lower()} de cuaderno {cuaderno_nombre}")
             try:
                 await page.click(f'#{modal_id} a[href="{href}"]')
             except Exception:
@@ -317,11 +329,14 @@ class _PjudModalScraper:
         ningun documento (eso lo decide el worker)."""
         page = self._page
 
+        await self._reportar("Obteniendo cabecera")
         cabecera_info = await page.evaluate(JS_EXTRAER_CABECERA, modal_id)
         campos = cabecera_info.get("campos", {})
         descargas = cabecera_info.get("descargas", [])
 
         submodales = {}
+        if cabecera_info.get("submodales"):
+            await self._reportar("Obteniendo anexos de la causa")
         for sub in cabecera_info.get("submodales", []):
             tabla = await self._procesar_submodal(modal_id, sub["target"])
             if tabla is not None:
@@ -360,11 +375,11 @@ class _PjudModalScraper:
                         logger.exception("No se pudo cambiar al cuaderno '%s'; se omite", etiqueta)
                         continue
                     await page.wait_for_timeout(900)
-                secciones = await self._extraer_cuaderno_actual(modal_id)
                 nombre_limpio = re.sub(r"^\d+\s*-\s*", "", etiqueta).strip() or etiqueta
+                secciones = await self._extraer_cuaderno_actual(modal_id, nombre_limpio)
                 cuadernos.append({"numero": numero, "nombre": nombre_limpio, "secciones": secciones})
         else:
-            secciones = await self._extraer_cuaderno_actual(modal_id)
+            secciones = await self._extraer_cuaderno_actual(modal_id, "Principal")
             cuadernos.append({"numero": 1, "nombre": "Principal", "secciones": secciones})
 
         await page.evaluate(JS_CERRAR_MODAL, modal_id)
@@ -430,11 +445,12 @@ class PjudSessionAsync(_PjudModalScraper):
         return [o for o in options if o["value"] not in ("", "0")]
 
     async def buscar_y_extraer(
-        self, competencia: str, corte: str, tribunal: str, tipo: str, rol, anio
+        self, competencia: str, corte: str, tribunal: str, tipo: str, rol, anio, progreso=None
     ) -> dict:
         """Reproduce la busqueda humana de la causa en la Consulta Unificada publica y
         extrae cabecera + cuadernos."""
         page = self._page
+        self._progreso = progreso
         logger.info(
             "Buscando causa %s-%s-%s (competencia=%s, corte=%s, tribunal=%s)",
             tipo, rol, anio, competencia, corte, tribunal,
@@ -476,6 +492,7 @@ class PjudSessionAsync(_PjudModalScraper):
             detalle = await self._extraer_detalle_de_modal(modal_id)
             return {"encontrada": True, **detalle}
         finally:
+            self._progreso = None
             await page.wait_for_timeout(PAUSA_ENTRE_CONSULTAS_MS)
 
 
@@ -652,12 +669,14 @@ class PjudSessionPrivada(_PjudModalScraper):
             logger.exception("Error al activar el check de filtros")
         await page.wait_for_timeout(1200)
 
-    async def buscar_y_extraer_privada(self, tipo: str, rol, anio) -> dict:
+    async def buscar_y_extraer_privada(self, tipo: str, rol, anio, progreso=None) -> dict:
         """Busca la causa privada por Rit / Rol / Anio dentro de Mis Causas -> Civil y
         extrae cabecera + cuadernos (mismo modal que la Consulta Unificada)."""
         page = self._page
+        self._progreso = progreso
         logger.info("Buscando causa privada %s-%s-%s", tipo, rol, anio)
         try:
+            await self._reportar("Buscando la causa en Mis Causas")
             await self._ir_a_mis_causas_civil()
             await self._activar_filtros()
 
@@ -704,4 +723,5 @@ class PjudSessionPrivada(_PjudModalScraper):
             detalle = await self._extraer_detalle_de_modal(self.MODAL_DETALLE)
             return {"encontrada": True, **detalle}
         finally:
+            self._progreso = None
             await page.wait_for_timeout(PAUSA_ENTRE_CONSULTAS_MS)

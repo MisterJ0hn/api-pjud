@@ -14,8 +14,10 @@ from api.errors.exceptions import (
 logger = logging.getLogger("pjud.api")
 
 
-def _respuesta(code: int, mensaje: str) -> JSONResponse:
-    return JSONResponse(status_code=code, content={"exito": False, "code": code, "mensaje": mensaje})
+def _respuesta(code: int, mensaje: str, **extra) -> JSONResponse:
+    contenido = {"exito": False, "code": code, "mensaje": mensaje}
+    contenido.update({k: v for k, v in extra.items() if v is not None})
+    return JSONResponse(status_code=code, content=contenido)
 
 
 def _nombre_campo(error: dict) -> str:
@@ -42,7 +44,10 @@ def registrar_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ConflictoSincronizacionError)
     async def _handle_conflicto(request: Request, exc: ConflictoSincronizacionError):
-        return _respuesta(409, "Conflicto")
+        logger.info("409 Conflicto (%s): %s", exc.motivo, exc.detalle)
+        return _respuesta(
+            409, "Conflicto", motivo=exc.motivo, detalle=exc.detalle, reintentar_en=exc.reintentar_en
+        )
 
     @app.exception_handler(NoEncontradoError)
     async def _handle_no_encontrado(request: Request, exc: NoEncontradoError):

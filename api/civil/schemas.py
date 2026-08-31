@@ -55,6 +55,9 @@ class CuadernoItem(BaseModel):
 class CausaDetalle(BaseModel):
     identificador: str
     estado: str
+    # Paso actual de una sincronizacion en curso (p. ej. "Obteniendo historia de
+    # cuaderno Principal"). None cuando estado == "Completo".
+    detalle_estado: str | None = None
     fecha_ultima_sincronizacion: str | None = None
     rol: str | None = None
     fecha_ingreso: str | None = None

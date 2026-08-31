@@ -85,15 +85,42 @@ async def sincronizar_civil(
         session, COMPETENCIA, body.corte, body.tribunal, body.tipo, body.rol, body.anio
     )
 
+    # Se leen antes del CAS de lock: ese commit expira los atributos del ORM y en el
+    # contexto async un lazy-load posterior fallaria.
+    sync_iniciado_en = causa.sync_iniciado_en
+
     if causa.fecha_ultima_sincronizacion is not None:
         ahora = datetime.now(timezone.utc)
         umbral = timedelta(minutes=settings.sync_min_interval_minutes)
-        if ahora - causa.fecha_ultima_sincronizacion < umbral:
-            raise ConflictoSincronizacionError()
+        transcurrido = ahora - causa.fecha_ultima_sincronizacion
+        if transcurrido < umbral:
+            reintentar_en = causa.fecha_ultima_sincronizacion + umbral
+            raise ConflictoSincronizacionError(
+                motivo="intervalo_minimo",
+                detalle=(
+                    f"La causa se sincronizo hace {int(transcurrido.total_seconds() // 60)} min. "
+                    f"El intervalo minimo entre sincronizaciones es {settings.sync_min_interval_minutes} min; "
+                    f"se puede reintentar a partir de {reintentar_en.isoformat()}."
+                ),
+                reintentar_en=reintentar_en.isoformat(),
+            )
 
     lock_obtenido = await intentar_lock_sincronizacion(session, causa.id, settings.sync_lock_timeout_minutes)
     if not lock_obtenido:
-        raise ConflictoSincronizacionError()
+        expira_en = None
+        if sync_iniciado_en is not None:
+            expira_en = (
+                sync_iniciado_en + timedelta(minutes=settings.sync_lock_timeout_minutes)
+            ).isoformat()
+        raise ConflictoSincronizacionError(
+            motivo="sincronizacion_en_curso",
+            detalle=(
+                "Ya hay una sincronizacion en curso para esta causa"
+                + (f" (iniciada {sync_iniciado_en.isoformat()})" if sync_iniciado_en else "")
+                + (f"; el lock expira a las {expira_en}." if expira_en else ".")
+            ),
+            reintentar_en=expira_en,
+        )
 
     if credenciales is not None:
         rut, clave, metodo_login = credenciales

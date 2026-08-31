@@ -11,7 +11,18 @@ class CampoInvalidoError(Exception):
 
 
 class ConflictoSincronizacionError(Exception):
-    """409 -- ya hay una sincronizacion en curso (vigente) para esa causa."""
+    """409 -- no se puede encolar la sincronizacion ahora. `motivo` distingue el caso
+    (para poder identificarlo desde el cliente / los logs):
+
+    - "intervalo_minimo": la causa se sincronizo hace muy poco (< SYNC_MIN_INTERVAL_MINUTES).
+    - "sincronizacion_en_curso": ya hay una sincronizacion vigente (lock activo).
+    """
+
+    def __init__(self, motivo: str, detalle: str, reintentar_en: str | None = None):
+        self.motivo = motivo
+        self.detalle = detalle
+        self.reintentar_en = reintentar_en
+        super().__init__(detalle)
 
 
 class NoEncontradoError(Exception):
