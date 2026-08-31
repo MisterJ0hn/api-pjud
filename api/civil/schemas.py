@@ -99,7 +99,10 @@ class HistoriaDocItem(BaseModel):
 
 
 class HistoriaItem(BaseModel):
+    # `folio`: parte numerica (para ordenar/compatibilidad). `folio_texto`: el folio tal
+    # cual lo muestra PJUD -- "33" o "[6E]" para los movimientos de un exhorto.
     folio: int | None = None
+    folio_texto: str | None = None
     # Un folio puede traer 0, 1 o varios documentos en la columna "Doc.".
     doc: list[HistoriaDocItem] = Field(default_factory=list)
     anexo: list[HistoriaAnexoItem] = Field(default_factory=list)

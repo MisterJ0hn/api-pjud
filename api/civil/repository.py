@@ -237,7 +237,7 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
         await session.execute(
             select(MovimientoHistoria)
             .where(MovimientoHistoria.cuaderno_id == cuaderno.id)
-            .order_by(MovimientoHistoria.folio)
+            .order_by(MovimientoHistoria.folio.nulls_last(), MovimientoHistoria.id)
         )
     ).scalars().all()
     historia_items = []
@@ -259,6 +259,7 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
         historia_items.append(
             HistoriaItem(
                 folio=h.folio,
+                folio_texto=h.folio_texto,
                 doc=[HistoriaDocItem(doc=doc_url(d.documento_id)) for d in doc_rows],
                 anexo=[
                     HistoriaAnexoItem(doc=doc_url(a.documento_id), fecha=a.fecha, referencia=a.referencia)

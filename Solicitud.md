@@ -176,6 +176,11 @@ Response 200:
     "historia":[
         {
             "folio": 1,
+            // "folio" = parte numerica. "folio_texto" = folio tal cual lo muestra PJUD:
+            // "1" normalmente, o "[6E]" para los movimientos de un exhorto (numerados
+            // aparte, intercalados por fecha; un mismo "[NE]" puede repetirse si la causa
+            // tiene mas de un exhorto).
+            "folio_texto": "1",
             // "doc" es un array: 0, 1 o varios documentos por folio (columna "Doc.").
             "doc": [],
             "anexo": [],

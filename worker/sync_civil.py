@@ -17,6 +17,7 @@ nuevo una vez que cambia (ej. a "Efectuada").
 """
 
 import logging
+import re
 import unicodedata
 
 from sqlalchemy import delete, func, select
@@ -47,6 +48,23 @@ CATEGORIAS_CABECERA = {
     "certificado de envio": "certificado_envio",
     "ebook": "ebook",
 }
+
+# Folio de un movimiento de Historia: "33" (normal) o "[6E]" (movimiento de un exhorto,
+# numerado aparte y a veces repetido entre exhortos de la misma causa).
+_FOLIO_NORMAL_RE = re.compile(r"^(\d+)$")
+_FOLIO_EXHORTO_RE = re.compile(r"^\[(\d+)\s*E\]$")
+
+
+def _parsear_folio(folio_raw: str) -> tuple[str, int, bool] | None:
+    """(folio_texto, folio_numerico, es_exhorto) o None si el formato es desconocido."""
+    folio_texto = (folio_raw or "").strip()
+    m = _FOLIO_NORMAL_RE.match(folio_texto)
+    if m:
+        return folio_texto, int(m.group(1)), False
+    m = _FOLIO_EXHORTO_RE.match(folio_texto)
+    if m:
+        return f"[{m.group(1)}E]", int(m.group(1)), True
+    return None
 
 
 def _normalizar(texto: str) -> str:
@@ -113,18 +131,30 @@ async def _sincronizar_historia(
     for fila in tabla.get("filas", []):
         valores = fila["valores"]
         enlaces = fila.get("enlaces", {})
-        folio_raw = (valores.get("Folio") or "").strip()
-        if not folio_raw.isdigit():
+        folio_parseado = _parsear_folio(valores.get("Folio") or "")
+        if folio_parseado is None:
+            logger.warning("Folio de historia con formato inesperado %r; se omite", valores.get("Folio"))
             continue
-        folio = int(folio_raw)
+        folio_texto, folio, es_exhorto = folio_parseado
         h = hash_fila(valores)
 
         doc_urls = enlaces.get("Doc.") or []
 
-        existente = (
-            await session.execute(
-                select(MovimientoHistoria).where(MovimientoHistoria.cuaderno_id == cuaderno.id, MovimientoHistoria.folio == folio)
+        if es_exhorto:
+            # Los "[NE]" no tienen clave estable (un mismo "[6E]" puede venir de dos
+            # exhortos distintos): se identifican por contenido y son append-only.
+            filtro = (
+                MovimientoHistoria.cuaderno_id == cuaderno.id,
+                MovimientoHistoria.folio_texto == folio_texto,
+                MovimientoHistoria.hash_contenido == h,
             )
+        else:
+            filtro = (
+                MovimientoHistoria.cuaderno_id == cuaderno.id,
+                MovimientoHistoria.folio_texto == folio_texto,
+            )
+        existente = (
+            await session.execute(select(MovimientoHistoria).where(*filtro))
         ).scalar_one_or_none()
         if existente is not None and existente.hash_contenido == h:
             # Aunque el texto de la fila no cambio, reprocesa si en BD faltan documentos
@@ -139,14 +169,21 @@ async def _sincronizar_historia(
             if n_docs == len(doc_urls):
                 continue  # sin cambios y con todos los documentos ya guardados
             logger.info(
-                "Folio %s: %d/%d documentos en BD, se recompletan", folio, n_docs, len(doc_urls)
+                "Folio %s: %d/%d documentos en BD, se recompletan", folio_texto, n_docs, len(doc_urls)
             )
 
         hubo_cambios = True
         if existente is None:
-            existente = MovimientoHistoria(cuaderno_id=cuaderno.id, folio=folio, hash_contenido=h)
+            existente = MovimientoHistoria(
+                cuaderno_id=cuaderno.id, folio=folio, folio_texto=folio_texto, hash_contenido=h
+            )
             session.add(existente)
             await session.flush()
+
+        # Clave logica base de los documentos del folio. Para los "[NE]" de exhorto se
+        # incluye el hash de la fila porque el folio puede repetirse (y colisionaria en
+        # disco con el folio N "real").
+        clave_base = f"historia_folioE{folio}_{h[:10]}" if es_exhorto else f"historia_folio{folio}"
 
         # Un folio puede traer 0, 1 o varios documentos en la columna "Doc." (p. ej. el
         # escrito + su certificado de envio); se guardan todos como filas de
@@ -156,7 +193,7 @@ async def _sincronizar_historia(
                 delete(MovimientoHistoriaDoc).where(MovimientoHistoriaDoc.movimiento_id == existente.id)
             )
             for i, url in enumerate(doc_urls, start=1):
-                clave = f"historia_folio{folio}" if i == 1 else f"historia_folio{folio}_doc{i}"
+                clave = clave_base if i == 1 else f"{clave_base}_doc{i}"
                 doc = await _obtener_o_descargar_documento(
                     session, sesion_pjud, causa.id, cuaderno.id, "historia", clave,
                     rol_fmt, cuaderno.numero, url, hash_padre=h,
@@ -189,7 +226,7 @@ async def _sincronizar_historia(
                 if a.get("doc"):
                     doc = await _obtener_o_descargar_documento(
                         session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo",
-                        f"historia_folio{folio}_anexo{i}", rol_fmt, cuaderno.numero, a["doc"],
+                        f"{clave_base}_anexo{i}", rol_fmt, cuaderno.numero, a["doc"],
                         referencia=a.get("referencia"), hash_padre=h,
                     )
                 session.add(
@@ -205,7 +242,7 @@ async def _sincronizar_historia(
             await session.execute(delete(MovimientoHistoriaAnexo).where(MovimientoHistoriaAnexo.movimiento_id == existente.id))
             for i, url in enumerate(anexo_urls, start=1):
                 doc = await _obtener_o_descargar_documento(
-                    session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo", f"historia_folio{folio}_anexo{i}",
+                    session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo", f"{clave_base}_anexo{i}",
                     rol_fmt, cuaderno.numero, url,
                 )
                 session.add(

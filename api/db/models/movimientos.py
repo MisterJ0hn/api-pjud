@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,7 +12,14 @@ class MovimientoHistoria(Base):
     cuaderno_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("cuadernos.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    folio: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Folio tal cual lo muestra PJUD: normalmente un entero ("33"), pero los movimientos
+    # de un exhorto vienen numerados aparte y entre corchetes ("[6E]", "[2E]"),
+    # intercalados por fecha en la misma tabla Historia. Un mismo "[NE]" puede repetirse
+    # cuando la causa tiene mas de un exhorto (cada uno reinicia su numeracion).
+    folio_texto: Mapped[str] = mapped_column(String(12), nullable=False)
+    # Parte numerica del folio (33, o 6 para "[6E]"); solo para ordenar. Nullable por si
+    # aparece un formato de folio que no sepamos parsear.
+    folio: Mapped[int | None] = mapped_column(Integer, nullable=True)
     etapa: Mapped[str | None] = mapped_column(String(300), nullable=True)
     tramite: Mapped[str | None] = mapped_column(String(300), nullable=True)
     descripcion_tramite: Mapped[str | None] = mapped_column(String(1000), nullable=True)
@@ -29,7 +36,27 @@ class MovimientoHistoria(Base):
         order_by="MovimientoHistoriaDoc.orden",
     )
 
-    __table_args__ = (UniqueConstraint("cuaderno_id", "folio", name="uq_historia_cuaderno_folio"),)
+    __table_args__ = (
+        # Folios normales: siguen teniendo clave natural (cuaderno, folio) -> una fila por
+        # folio, se hace UPDATE cuando cambia el contenido. Indice parcial: excluye los
+        # "[NE]" de exhorto (que si pueden repetirse dentro del cuaderno).
+        Index(
+            "uq_historia_cuaderno_folio",
+            "cuaderno_id",
+            "folio",
+            unique=True,
+            postgresql_where=text("folio_texto NOT LIKE '[%'"),
+        ),
+        # Filas de exhorto ("[NE]"): sin clave estable en el HTML (un mismo "[6E]" puede
+        # venir de dos exhortos distintos), asi que se identifican por contenido -- append
+        # -only, igual que escritos_resolver / notificaciones.
+        UniqueConstraint(
+            "cuaderno_id",
+            "folio_texto",
+            "hash_contenido",
+            name="uq_historia_cuaderno_foliotexto_hash",
+        ),
+    )
 
 
 class MovimientoHistoriaDoc(Base):
