@@ -24,6 +24,7 @@ Diferencias de fondo respecto al cliente sync (`scraper/pjud_client.py`):
    nombrado los decide el worker (`worker/sync_civil.py`).
 """
 
+import base64
 import logging
 import re
 
@@ -213,27 +214,82 @@ class _PjudModalScraper:
         except Exception:
             logger.exception("Error al reportar progreso '%s'", texto)
 
+    # Baja la URL usando `fetch` DENTRO de la pagina: hereda cookies de sesion, el
+    # `Referer`, el origin y los headers `Sec-Fetch-*` tal cual los manda el navegador.
+    # Los endpoints de documentos de PJUD (docuN.php / docuS.php) devuelven 403 a un
+    # request "pelado" desde el APIRequestContext de Playwright que no lleva esos headers.
+    _JS_FETCH_DOC = """async (url) => {
+        try {
+            const r = await fetch(url, {credentials: 'include', redirect: 'follow'});
+            const buf = await r.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            let bin = '';
+            const CHUNK = 0x8000;
+            for (let i = 0; i < bytes.length; i += CHUNK) {
+                bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+            }
+            return {ok: r.ok, status: r.status,
+                    contentType: r.headers.get('content-type') || '', b64: btoa(bin)};
+        } catch (e) {
+            return {error: String(e)};
+        }
+    }"""
+
+    def _validar_documento(self, content_type: str, cuerpo: bytes, url: str) -> bool:
+        """PJUD responde con placeholders HTML/texto o errores de Oracle cuando el tramite
+        no tiene documento real. Loguea el motivo para poder distinguir 'no hay documento'
+        de 'PJUD nos bloqueo'."""
+        ct = (content_type or "").split(";")[0].strip().lower()
+        preview = cuerpo[:300].lstrip()
+        if ct in ("text/html", "text/plain", ""):
+            logger.warning(
+                "Descarga %s: content-type '%s' (no es documento). Inicio del cuerpo: %r",
+                url, ct or "(vacio)", preview[:200],
+            )
+            return False
+        if ct == "application/pdf" and not cuerpo.startswith(b"%PDF"):
+            logger.warning("Descarga %s: content-type PDF pero el cuerpo no empieza con %%PDF (%r)", url, preview[:60])
+            return False
+        if preview.startswith(b"ORA-") or b"no data found" in preview.lower():
+            logger.warning("Descarga %s: respuesta de error de Oracle (%r)", url, preview[:120])
+            return False
+        return True
+
     async def descargar_bytes(self, url: str) -> tuple[str, bytes] | None:
-        """Descarga una URL de PJUD y valida que sea realmente un documento (el sitio
-        responde con placeholders HTML/texto o errores de Oracle cuando el tramite no
-        tiene un documento real asociado). Devuelve (content_type, bytes) o None."""
+        """Descarga una URL de PJUD y valida que sea realmente un documento. Devuelve
+        (content_type, bytes) o None. Intenta primero via `fetch` en la pagina (con la
+        sesion completa) y cae al APIRequestContext solo si eso falla."""
+        # 1) fetch dentro de la pagina
         try:
-            resp = await self._context.request.get(url)
+            res = await self._page.evaluate(self._JS_FETCH_DOC, url)
+        except Exception:
+            logger.exception("Error evaluando fetch para %s", url)
+            res = None
+
+        if res and not res.get("error"):
+            if not res.get("ok"):
+                logger.warning("Descarga fallida (HTTP %s, via fetch) para %s", res.get("status"), url)
+            else:
+                cuerpo = base64.b64decode(res.get("b64") or "")
+                ct = res.get("contentType") or ""
+                if self._validar_documento(ct, cuerpo, url):
+                    return ct.split(";")[0].strip().lower() or "application/octet-stream", cuerpo
+                return None
+        elif res and res.get("error"):
+            logger.warning("fetch de %s fallo en la pagina: %s", url, res["error"])
+
+        # 2) fallback: APIRequestContext con Referer del navegador
+        try:
+            referer = self._page.url
+            resp = await self._context.request.get(url, headers={"Referer": referer} if referer else None)
             if not resp.ok:
-                logger.warning("Descarga fallida (HTTP %s) para %s", resp.status, url)
+                logger.warning("Descarga fallida (HTTP %s, via request) para %s (referer=%s)", resp.status, url, referer)
                 return None
-
-            content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+            content_type = resp.headers.get("content-type") or ""
             cuerpo = await resp.body()
-
-            if content_type in ("text/html", "text/plain", ""):
-                return None
-            if content_type == "application/pdf" and not cuerpo.startswith(b"%PDF"):
-                return None
-            if cuerpo[:200].lstrip().startswith(b"ORA-") or b"no data found" in cuerpo[:200]:
-                return None
-
-            return content_type, cuerpo
+            if self._validar_documento(content_type, cuerpo, url):
+                return content_type.split(";")[0].strip().lower() or "application/octet-stream", cuerpo
+            return None
         except Exception:
             logger.exception("Error al descargar %s", url)
             return None
