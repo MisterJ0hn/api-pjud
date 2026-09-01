@@ -145,7 +145,10 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             logger.warning("Job %s: %s (%s)", job.id, type(exc).__name__, exc)
         except Exception as exc:
             await session.rollback()
-            logger.exception("Job %s fallo", job.id)
+            # `job.id` quedo expirado tras el flush fallido: leerlo aca dispararia un
+            # lazy-load sincrono sobre la conexion rota (MissingGreenlet) y tumbaria
+            # el worker entero. Usar el int que ya tenemos.
+            logger.exception("Job %s fallo", job_id)
             job = await session.get(SyncJob, job_id)
             causa = await session.get(Causa, job.causa_id)
             if job.intentos < MAX_INTENTOS:
