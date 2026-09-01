@@ -17,10 +17,11 @@ nuevo una vez que cambia (ej. a "Efectuada").
 """
 
 import logging
+import os
 import re
 import unicodedata
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,6 +73,35 @@ def _normalizar(texto: str) -> str:
     return sin_tildes.strip().lower()
 
 
+def _archivo_en_disco(ruta: str | None) -> bool:
+    return bool(ruta) and os.path.isfile(ruta)
+
+
+async def _documento_en_disco(session: AsyncSession, documento_id) -> bool:
+    """True si hay un Documento con ese id y su archivo sigue presente en disco."""
+    if documento_id is None:
+        return False
+    ruta = (
+        await session.execute(select(Documento.ruta_archivo).where(Documento.id == documento_id))
+    ).scalar_one_or_none()
+    return _archivo_en_disco(ruta)
+
+
+async def _descargar_a_disco(
+    sesion_pjud: PjudSessionAsync, url: str, rol_fmt: str, clave_logica: str, cuaderno_numero: int | None
+) -> str | None:
+    """Descarga `url` y la escribe en disco. Devuelve la ruta, o None si PJUD no
+    entrego un documento real (placeholder HTML, error de Oracle, HTTP != 2xx)."""
+    resultado = await sesion_pjud.descargar_bytes(url)
+    if resultado is None:
+        return None
+    content_type, cuerpo = resultado
+    ruta = ruta_documento(rol_fmt, clave_logica, cuaderno_numero, extension_por_content_type(content_type))
+    with open(ruta, "wb") as f:
+        f.write(cuerpo)
+    return ruta
+
+
 async def _obtener_o_descargar_documento(
     session: AsyncSession,
     sesion_pjud: PjudSessionAsync,
@@ -85,21 +115,31 @@ async def _obtener_o_descargar_documento(
     referencia: str | None = None,
     hash_padre: str | None = None,
 ) -> Documento | None:
-    """Idempotencia real: si ya existe un Documento con esta clave_logica, se devuelve
-    sin volver a llamar a PJUD. Solo se descarga cuando realmente no lo teniamos."""
+    """Idempotencia real: si ya existe un Documento con esta clave_logica NO se vuelve a
+    llamar a PJUD... salvo que su archivo ya no este en disco (descarga que fallo en un
+    sync anterior, archivo borrado, volumen perdido): en ese caso se re-descarga y se
+    actualiza la ruta, conservando la misma fila."""
     existente = (
         await session.execute(select(Documento).where(Documento.causa_id == causa_id, Documento.clave_logica == clave_logica))
     ).scalar_one_or_none()
     if existente is not None:
+        if _archivo_en_disco(existente.ruta_archivo):
+            return existente
+        logger.warning(
+            "Documento '%s' registrado pero sin archivo en disco (%s); se re-descarga",
+            clave_logica, existente.ruta_archivo,
+        )
+        ruta = await _descargar_a_disco(sesion_pjud, url, rol_fmt, clave_logica, cuaderno_numero)
+        if ruta is None:
+            logger.warning("Re-descarga de '%s' fallo; queda pendiente para el proximo sync", clave_logica)
+            return existente
+        existente.ruta_archivo = ruta
+        await session.flush()
         return existente
 
-    resultado = await sesion_pjud.descargar_bytes(url)
-    if resultado is None:
+    ruta = await _descargar_a_disco(sesion_pjud, url, rol_fmt, clave_logica, cuaderno_numero)
+    if ruta is None:
         return None
-    content_type, cuerpo = resultado
-    ruta = ruta_documento(rol_fmt, clave_logica, cuaderno_numero, extension_por_content_type(content_type))
-    with open(ruta, "wb") as f:
-        f.write(cuerpo)
 
     documento = Documento(
         causa_id=causa_id,
@@ -208,6 +248,37 @@ async def _persistir_docs_anexos_historia(
             )
 
 
+async def _folio_docs_completos(session: AsyncSession, mov_id: int, n_docs_esperado: int) -> bool:
+    """El folio ya tiene sus `n_docs_esperado` filas de documento, cada una vinculada a
+    un Documento cuyo archivo sigue en disco, y los anexos con Documento tambien tienen
+    su archivo. Si algo falta se devuelve False para que el folio se recomplete (y se
+    re-descargue lo que corresponda)."""
+    doc_ids = (
+        await session.execute(
+            select(MovimientoHistoriaDoc.documento_id).where(MovimientoHistoriaDoc.movimiento_id == mov_id)
+        )
+    ).scalars().all()
+    if len(doc_ids) != n_docs_esperado or any(d is None for d in doc_ids):
+        return False
+
+    anexo_doc_ids = (
+        await session.execute(
+            select(MovimientoHistoriaAnexo.documento_id).where(
+                MovimientoHistoriaAnexo.movimiento_id == mov_id,
+                MovimientoHistoriaAnexo.documento_id.is_not(None),
+            )
+        )
+    ).scalars().all()
+
+    ids = [d for d in [*doc_ids, *anexo_doc_ids] if d is not None]
+    if not ids:
+        return True
+    rutas = (
+        await session.execute(select(Documento.ruta_archivo).where(Documento.id.in_(ids)))
+    ).scalars().all()
+    return len(rutas) == len(ids) and all(_archivo_en_disco(r) for r in rutas)
+
+
 async def _sincronizar_historia(
     session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict, rol_fmt: str
 ) -> bool:
@@ -295,27 +366,17 @@ async def _sincronizar_historia(
         ).scalar_one_or_none()
 
         if existente is not None and existente.hash_contenido == h:
-            # Aunque el texto de la fila no cambio, reprocesa si en BD faltan documentos
-            # del folio (p. ej. datos de una version que solo guardaba el primero).
-            n_docs = (
-                await session.execute(
-                    select(func.count())
-                    .select_from(MovimientoHistoriaDoc)
-                    .where(MovimientoHistoriaDoc.movimiento_id == existente.id)
-                )
-            ).scalar_one()
-            if n_docs == len(enlaces.get("Doc.") or []):
-                # Sin cambios de contenido; solo puede haberse movido de posicion (PJUD
-                # agrego folios/exhortos arriba). Eso no es un "cambio" que amerite
-                # re-descargar nada.
+            # Aunque el texto de la fila no cambio, se recompleta el folio si en BD
+            # faltan documentos (una version vieja guardaba solo el primero) o si el
+            # archivo de alguno ya no esta en disco (descarga fallida, archivo perdido).
+            if await _folio_docs_completos(session, existente.id, len(enlaces.get("Doc.") or [])):
+                # Sin cambios de contenido y todo en disco; solo puede haberse movido de
+                # posicion (PJUD agrego folios/exhortos arriba). No amerita descargar nada.
                 if existente.orden != idx:
                     existente.orden = idx
                     await session.commit()
                 continue
-            logger.info(
-                "Folio %s: %d/%d documentos en BD, se recompletan",
-                folio_texto, n_docs, len(enlaces.get("Doc.") or []),
-            )
+            logger.info("Folio %s: documento faltante en BD o en disco, se recompleta", folio_texto)
 
         hubo_cambios = True
         if existente is None:
@@ -390,11 +451,23 @@ async def _sincronizar_escritos_resolver(
                 select(EscritoResolver).where(EscritoResolver.cuaderno_id == cuaderno.id, EscritoResolver.contenido_hash == h)
             )
         ).scalar_one_or_none()
+        clave = f"escrito_{slug(valores.get('Fecha de Ingreso'))}_{slug(valores.get('Tipo Escrito'))}"
         if existente is not None:
-            continue  # mismo escrito ya registrado (mismo contenido) -> no se toca nada
+            # Mismo escrito (mismo contenido): no se toca la fila, pero se revisa que su
+            # documento siga en disco y se re-descarga si falta.
+            doc_urls = enlaces.get("Doc.") or []
+            if doc_urls and not await _documento_en_disco(session, existente.documento_id):
+                logger.info("Escrito por resolver %s: documento faltante en disco, se re-descarga", existente.id)
+                doc = await _obtener_o_descargar_documento(
+                    session, sesion_pjud, causa.id, cuaderno.id, "escrito_resolver", clave,
+                    rol_fmt, cuaderno.numero, doc_urls[0], hash_padre=h,
+                )
+                if doc is not None and existente.documento_id != doc.id:
+                    existente.documento_id = doc.id
+                await session.commit()
+            continue
 
         hubo_cambios = True
-        clave = f"escrito_{slug(valores.get('Fecha de Ingreso'))}_{slug(valores.get('Tipo Escrito'))}"
         doc_urls = enlaces.get("Doc.") or []
         documento_id = None
         if doc_urls:
@@ -559,10 +632,20 @@ async def sincronizar_causa(
                 select(AnexoCausa).where(AnexoCausa.causa_id == causa.id, AnexoCausa.referencia == referencia, AnexoCausa.fecha == fecha)
             )
         ).scalar_one_or_none()
+        urls = sub.get("enlaces", {}).get("Doc.") or []
         if existente is not None:
+            # Anexo ya registrado: solo se revisa que su documento siga en disco.
+            if urls and not await _documento_en_disco(session, existente.documento_id):
+                logger.info("Anexo de causa '%s': documento faltante en disco, se re-descarga", referencia)
+                doc = await _obtener_o_descargar_documento(
+                    session, sesion_pjud, causa.id, None, "anexo_causa", f"anexo_{slug(referencia)}",
+                    rol_fmt, None, urls[0], referencia=referencia,
+                )
+                if doc is not None and existente.documento_id != doc.id:
+                    existente.documento_id = doc.id
+                await session.commit()
             continue
         hubo_cambios = True
-        urls = sub.get("enlaces", {}).get("Doc.") or []
         documento_id = None
         if urls:
             doc = await _obtener_o_descargar_documento(
@@ -611,7 +694,7 @@ async def sincronizar_causa(
             existente = (
                 await session.execute(select(Documento).where(Documento.causa_id == causa.id, Documento.clave_logica == "ebook"))
             ).scalar_one_or_none()
-            if existente is not None:
+            if existente is not None and _archivo_en_disco(existente.ruta_archivo):
                 continue
         await _obtener_o_descargar_documento(session, sesion_pjud, causa.id, None, categoria, categoria, rol_fmt, None, d["url"])
         await session.commit()
