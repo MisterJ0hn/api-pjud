@@ -19,11 +19,17 @@ def hash_fila(valores: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def ruta_documento(rol_fmt: str, clave_logica: str, cuaderno_numero: int | None, extension: str) -> str:
+def dir_causa(causa_id) -> str:
+    """Carpeta raiz de los documentos de una causa. Se usa el id (UUID) y no el rol
+    formateado porque la misma RIT (p. ej. C-5656-2021) puede existir en dos tribunales
+    distintos -> mismo rol_fmt -> los archivos se pisaban entre si."""
+    return os.path.join(settings.documentos_dir, str(causa_id))
+
+
+def ruta_documento(causa_id, clave_logica: str, cuaderno_numero: int | None, extension: str) -> str:
+    carpeta = dir_causa(causa_id)
     if cuaderno_numero is not None:
-        carpeta = os.path.join(settings.documentos_dir, rol_fmt, str(cuaderno_numero))
-    else:
-        carpeta = os.path.join(settings.documentos_dir, rol_fmt)
+        carpeta = os.path.join(carpeta, str(cuaderno_numero))
     os.makedirs(carpeta, exist_ok=True)
     return os.path.join(carpeta, f"{clave_logica}{extension}")
 

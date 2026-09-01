@@ -136,12 +136,12 @@ async def encolar_sync_job(
     await session.commit()
 
 
-def _doc_ref(doc: Documento | None, rol_fmt: str, cuaderno_numero: int | None = None) -> DocumentoRef | None:
+def _doc_ref(doc: Documento | None, causa_id, cuaderno_numero: int | None = None) -> DocumentoRef | None:
     if doc is None:
         return None
     return DocumentoRef(
         nombre_archivo=doc.nombre_archivo,
-        url=url_publica_documento(rol_fmt, doc.nombre_archivo, cuaderno_numero),
+        url=url_publica_documento(causa_id, doc.nombre_archivo, cuaderno_numero),
     )
 
 
@@ -168,7 +168,7 @@ async def construir_causa_detalle(session: AsyncSession, causa: Causa) -> CausaD
             referencia=a.referencia,
             nombre_doc=docs_por_id[a.documento_id].nombre_archivo if a.documento_id in docs_por_id else None,
             doc=(
-                url_publica_documento(rol_fmt, docs_por_id[a.documento_id].nombre_archivo)
+                url_publica_documento(causa.id, docs_por_id[a.documento_id].nombre_archivo)
                 if a.documento_id in docs_por_id
                 else None
             ),
@@ -209,9 +209,9 @@ async def construir_causa_detalle(session: AsyncSession, causa: Causa) -> CausaD
         estado_proceso=causa.estado_proceso,
         etapa=causa.etapa,
         tribunal=causa.tribunal_nombre,
-        texto_demanda=_doc_ref(docs_por_categoria.get("texto_demanda"), rol_fmt),
-        certificado_envio=_doc_ref(docs_por_categoria.get("certificado_envio"), rol_fmt),
-        ebook=_doc_ref(docs_por_categoria.get("ebook"), rol_fmt),
+        texto_demanda=_doc_ref(docs_por_categoria.get("texto_demanda"), causa.id),
+        certificado_envio=_doc_ref(docs_por_categoria.get("certificado_envio"), causa.id),
+        ebook=_doc_ref(docs_por_categoria.get("ebook"), causa.id),
         anexos_causa=anexos,
         informacion_receptor=informacion_receptor,
         cuadernos=cuadernos,
@@ -224,14 +224,12 @@ async def obtener_cuaderno(session: AsyncSession, causa_id, numero: int) -> Cuad
 
 
 async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: Cuaderno) -> MovimientosResponse:
-    rol_fmt = causa.rol_formateado
-
     todos_docs = (await session.execute(select(Documento).where(Documento.causa_id == causa.id))).scalars().all()
     docs_por_id = {d.id: d for d in todos_docs}
 
     def doc_url(documento_id) -> str | None:
         doc = docs_por_id.get(documento_id)
-        return url_publica_documento(rol_fmt, doc.nombre_archivo, cuaderno.numero) if doc else None
+        return url_publica_documento(causa.id, doc.nombre_archivo, cuaderno.numero) if doc else None
 
     historia_rows = (
         await session.execute(

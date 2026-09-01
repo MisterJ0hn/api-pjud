@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -11,13 +13,18 @@ router = APIRouter(prefix="/public", tags=["documentos"])
 
 
 async def _resolver_y_servir(
-    session: AsyncSession, rol_fmt: str, nombre_con_ext: str, cuaderno_numero: int | None
+    session: AsyncSession, causa_id: str, nombre_con_ext: str, cuaderno_numero: int | None
 ) -> FileResponse:
     if not nombre_con_ext.lower().endswith(".pdf"):
         raise HTTPException(status_code=404, detail="No encontrado")
     nombre_archivo = nombre_con_ext[: -len(".pdf")]
 
-    causa = (await session.execute(select(Causa).where(Causa.rol_formateado == rol_fmt))).scalar_one_or_none()
+    try:
+        cid = uuid.UUID(causa_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    causa = (await session.execute(select(Causa).where(Causa.id == cid))).scalar_one_or_none()
     if causa is None:
         raise HTTPException(status_code=404, detail="No encontrado")
 
@@ -41,13 +48,13 @@ async def _resolver_y_servir(
     return FileResponse(documento.ruta_archivo, media_type="application/pdf", filename=nombre_con_ext)
 
 
-@router.get("/{rol_fmt}/{nombre_archivo}")
-async def documento_cabecera(rol_fmt: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
-    return await _resolver_y_servir(session, rol_fmt, nombre_archivo, None)
+@router.get("/{causa_id}/{nombre_archivo}")
+async def documento_cabecera(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir(session, causa_id, nombre_archivo, None)
 
 
-@router.get("/{rol_fmt}/{cuaderno_numero}/{nombre_archivo}")
+@router.get("/{causa_id}/{cuaderno_numero}/{nombre_archivo}")
 async def documento_cuaderno(
-    rol_fmt: str, cuaderno_numero: int, nombre_archivo: str, session: AsyncSession = Depends(get_session)
+    causa_id: str, cuaderno_numero: int, nombre_archivo: str, session: AsyncSession = Depends(get_session)
 ):
-    return await _resolver_y_servir(session, rol_fmt, nombre_archivo, cuaderno_numero)
+    return await _resolver_y_servir(session, causa_id, nombre_archivo, cuaderno_numero)

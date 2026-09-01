@@ -89,7 +89,7 @@ async def _documento_en_disco(session: AsyncSession, documento_id) -> bool:
 
 
 async def _descargar_a_disco(
-    sesion_pjud: PjudSessionAsync, url: str, rol_fmt: str, clave_logica: str, cuaderno_numero: int | None
+    sesion_pjud: PjudSessionAsync, url: str, causa_id, clave_logica: str, cuaderno_numero: int | None
 ) -> str | None:
     """Descarga `url` y la escribe en disco. Devuelve la ruta, o None si PJUD no
     entrego un documento real (placeholder HTML, error de Oracle, HTTP != 2xx)."""
@@ -97,7 +97,7 @@ async def _descargar_a_disco(
     if resultado is None:
         return None
     content_type, cuerpo = resultado
-    ruta = ruta_documento(rol_fmt, clave_logica, cuaderno_numero, extension_por_content_type(content_type))
+    ruta = ruta_documento(causa_id, clave_logica, cuaderno_numero, extension_por_content_type(content_type))
     with open(ruta, "wb") as f:
         f.write(cuerpo)
     return ruta
@@ -110,7 +110,6 @@ async def _obtener_o_descargar_documento(
     cuaderno_id,
     categoria: str,
     clave_logica: str,
-    rol_fmt: str,
     cuaderno_numero: int | None,
     url: str,
     referencia: str | None = None,
@@ -130,7 +129,7 @@ async def _obtener_o_descargar_documento(
             "Documento '%s' registrado pero sin archivo en disco (%s); se re-descarga",
             clave_logica, existente.ruta_archivo,
         )
-        ruta = await _descargar_a_disco(sesion_pjud, url, rol_fmt, clave_logica, cuaderno_numero)
+        ruta = await _descargar_a_disco(sesion_pjud, url, causa_id, clave_logica, cuaderno_numero)
         if ruta is None:
             logger.warning("Re-descarga de '%s' fallo; queda pendiente para el proximo sync", clave_logica)
             return existente
@@ -138,7 +137,7 @@ async def _obtener_o_descargar_documento(
         await session.flush()
         return existente
 
-    ruta = await _descargar_a_disco(sesion_pjud, url, rol_fmt, clave_logica, cuaderno_numero)
+    ruta = await _descargar_a_disco(sesion_pjud, url, causa_id, clave_logica, cuaderno_numero)
     if ruta is None:
         return None
 
@@ -183,7 +182,6 @@ async def _persistir_docs_anexos_historia(
     fila: dict,
     enlaces: dict,
     clave_base: str,
-    rol_fmt: str,
     h: str,
 ) -> None:
     """(Re)crea las filas movimientos_historia_docs / _anexos del folio. Las descargas
@@ -200,7 +198,7 @@ async def _persistir_docs_anexos_historia(
             clave = clave_base if i == 1 else f"{clave_base}_doc{i}"
             doc = await _obtener_o_descargar_documento(
                 session, sesion_pjud, causa.id, cuaderno.id, "historia", clave,
-                rol_fmt, cuaderno.numero, url, hash_padre=h,
+                cuaderno.numero, url, hash_padre=h,
             )
             session.add(
                 MovimientoHistoriaDoc(
@@ -223,7 +221,7 @@ async def _persistir_docs_anexos_historia(
             if a.get("doc"):
                 doc = await _obtener_o_descargar_documento(
                     session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo",
-                    f"{clave_base}_anexo{i}", rol_fmt, cuaderno.numero, a["doc"],
+                    f"{clave_base}_anexo{i}", cuaderno.numero, a["doc"],
                     referencia=a.get("referencia"), hash_padre=h,
                 )
             session.add(
@@ -242,7 +240,7 @@ async def _persistir_docs_anexos_historia(
         for i, url in enumerate(anexo_urls, start=1):
             doc = await _obtener_o_descargar_documento(
                 session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo", f"{clave_base}_anexo{i}",
-                rol_fmt, cuaderno.numero, url,
+                cuaderno.numero, url,
             )
             session.add(
                 MovimientoHistoriaAnexo(movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i)
@@ -281,7 +279,7 @@ async def _folio_docs_completos(session: AsyncSession, mov_id: int, n_docs_esper
 
 
 async def _sincronizar_historia(
-    session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict, rol_fmt: str
+    session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict
 ) -> bool:
     """La tabla Historia mezcla, en un orden que solo PJUD conoce, los folios del cuaderno
     (enteros, descendentes) con bloques de movimientos de exhorto ("[NE]", intercalados
@@ -350,7 +348,7 @@ async def _sincronizar_historia(
             session.add(mov)
             await session.flush()
             await _persistir_docs_anexos_historia(
-                session, sesion_pjud, causa, cuaderno, mov, fila, enlaces, clave_base, rol_fmt, h
+                session, sesion_pjud, causa, cuaderno, mov, fila, enlaces, clave_base, h
             )
             await session.commit()
             continue
@@ -393,7 +391,7 @@ async def _sincronizar_historia(
         await session.flush()
         await _persistir_docs_anexos_historia(
             session, sesion_pjud, causa, cuaderno, existente, fila, enlaces,
-            f"historia_folio{folio}", rol_fmt, h,
+            f"historia_folio{folio}", h,
         )
         await session.commit()
 
@@ -440,7 +438,7 @@ async def _reemplazar_notificaciones(session: AsyncSession, cuaderno: Cuaderno, 
 
 
 async def _sincronizar_escritos_resolver(
-    session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict, rol_fmt: str
+    session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict
 ) -> bool:
     hubo_cambios = False
     for fila in tabla.get("filas", []):
@@ -461,7 +459,7 @@ async def _sincronizar_escritos_resolver(
                 logger.info("Escrito por resolver %s: documento faltante en disco, se re-descarga", existente.id)
                 doc = await _obtener_o_descargar_documento(
                     session, sesion_pjud, causa.id, cuaderno.id, "escrito_resolver", clave,
-                    rol_fmt, cuaderno.numero, doc_urls[0], hash_padre=h,
+                    cuaderno.numero, doc_urls[0], hash_padre=h,
                 )
                 if doc is not None and existente.documento_id != doc.id:
                     existente.documento_id = doc.id
@@ -473,7 +471,7 @@ async def _sincronizar_escritos_resolver(
         documento_id = None
         if doc_urls:
             doc = await _obtener_o_descargar_documento(
-                session, sesion_pjud, causa.id, cuaderno.id, "escrito_resolver", clave, rol_fmt, cuaderno.numero, doc_urls[0], hash_padre=h
+                session, sesion_pjud, causa.id, cuaderno.id, "escrito_resolver", clave, cuaderno.numero, doc_urls[0], hash_padre=h
             )
             documento_id = doc.id if doc else None
 
@@ -492,7 +490,7 @@ async def _sincronizar_escritos_resolver(
 
 
 async def _sincronizar_exhortos(
-    session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict, rol_fmt: str
+    session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict
 ) -> bool:
     """Best-effort: no se conto con una causa real con exhortos con contenido durante el
     desarrollo (ver plan), asi que la agrupacion en rol_destino[] usa el propio texto de
@@ -532,7 +530,7 @@ async def _sincronizar_exhortos(
             for i, url in enumerate(rol_destino_urls, start=1):
                 doc = await _obtener_o_descargar_documento(
                     session, sesion_pjud, causa.id, cuaderno.id, "exhorto",
-                    f"exhorto_{slug(rol_origen)}_{slug(tipo_exhorto)}_item{i}", rol_fmt, cuaderno.numero, url,
+                    f"exhorto_{slug(rol_origen)}_{slug(tipo_exhorto)}_item{i}", cuaderno.numero, url,
                 )
                 session.add(ExhortoRolDestinoItem(rol_destino_id=grupo.id, documento_id=doc.id if doc else None, orden=i))
             hubo_cambios = True
@@ -618,7 +616,7 @@ async def sincronizar_causa(
         secciones = c.get("secciones", {})
         if "Historia" in secciones:
             await _rep(f"Guardando historia de cuaderno {cuaderno.nombre}")
-            if await _sincronizar_historia(session, sesion_pjud, causa, cuaderno, secciones["Historia"], rol_fmt):
+            if await _sincronizar_historia(session, sesion_pjud, causa, cuaderno, secciones["Historia"]):
                 hubo_cambios = True
         if "Litigantes" in secciones:
             await _rep(f"Guardando litigantes de cuaderno {cuaderno.nombre}")
@@ -628,11 +626,11 @@ async def sincronizar_causa(
             await _reemplazar_notificaciones(session, cuaderno, secciones["Notificaciones"])
         if "Escritos por Resolver" in secciones:
             await _rep(f"Guardando escritos por resolver de cuaderno {cuaderno.nombre}")
-            if await _sincronizar_escritos_resolver(session, sesion_pjud, causa, cuaderno, secciones["Escritos por Resolver"], rol_fmt):
+            if await _sincronizar_escritos_resolver(session, sesion_pjud, causa, cuaderno, secciones["Escritos por Resolver"]):
                 hubo_cambios = True
         if "Exhortos" in secciones:
             await _rep(f"Guardando exhortos de cuaderno {cuaderno.nombre}")
-            if await _sincronizar_exhortos(session, sesion_pjud, causa, cuaderno, secciones["Exhortos"], rol_fmt):
+            if await _sincronizar_exhortos(session, sesion_pjud, causa, cuaderno, secciones["Exhortos"]):
                 hubo_cambios = True
 
     # --- Cabecera: anexos_causa, informacion_receptor ----------------------------
@@ -653,7 +651,7 @@ async def sincronizar_causa(
                 logger.info("Anexo de causa '%s': documento faltante en disco, se re-descarga", referencia)
                 doc = await _obtener_o_descargar_documento(
                     session, sesion_pjud, causa.id, None, "anexo_causa", f"anexo_{slug(referencia)}",
-                    rol_fmt, None, urls[0], referencia=referencia,
+                    None, urls[0], referencia=referencia,
                 )
                 if doc is not None and existente.documento_id != doc.id:
                     existente.documento_id = doc.id
@@ -663,7 +661,7 @@ async def sincronizar_causa(
         documento_id = None
         if urls:
             doc = await _obtener_o_descargar_documento(
-                session, sesion_pjud, causa.id, None, "anexo_causa", f"anexo_{slug(referencia)}", rol_fmt, None, urls[0], referencia=referencia
+                session, sesion_pjud, causa.id, None, "anexo_causa", f"anexo_{slug(referencia)}", None, urls[0], referencia=referencia
             )
             documento_id = doc.id if doc else None
         session.add(AnexoCausa(causa_id=causa.id, documento_id=documento_id, fecha=fecha, referencia=referencia))
@@ -710,7 +708,7 @@ async def sincronizar_causa(
             ).scalar_one_or_none()
             if existente is not None and _archivo_en_disco(existente.ruta_archivo):
                 continue
-        await _obtener_o_descargar_documento(session, sesion_pjud, causa.id, None, categoria, categoria, rol_fmt, None, d["url"])
+        await _obtener_o_descargar_documento(session, sesion_pjud, causa.id, None, categoria, categoria, None, d["url"])
         await session.commit()
 
     logger.info("Sincronizacion de %s completada (hubo_cambios=%s)", rol_fmt, hubo_cambios)
