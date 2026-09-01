@@ -39,6 +39,7 @@ from api.db.models.movimientos import (
     MovimientoHistoriaDoc,
     Notificacion,
 )
+from api.db.models.tribunales import TribunalCatalogo
 from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionAsync, PjudSessionPrivada
 from worker.idempotencia import extension_por_content_type, hash_fila, ruta_documento, slug
 
@@ -560,8 +561,21 @@ async def sincronizar_causa(
         # Causa privada: ya se busca dentro de "Mis Causas" -> "Civil" filtrando solo por
         # Rit / Rol / Anio (no hay Corte ni Juzgado). El detalle extraido tiene la misma
         # forma que el de la Consulta Unificada, asi que el resto del flujo no cambia.
+        # Nombre del tribunal esperado desde el catalogo (autoritativo): sirve para
+        # descartar el detalle si la misma RIT existe en dos tribunales del usuario.
+        # No se usa causa.tribunal_nombre porque un sync erroneo previo pudo pisarlo.
+        tribunal_esperado = (
+            await session.execute(
+                select(TribunalCatalogo.tribunal_nombre).where(
+                    TribunalCatalogo.competencia == causa.competencia,
+                    TribunalCatalogo.corte_id == causa.corte,
+                    TribunalCatalogo.tribunal_id == causa.tribunal,
+                )
+            )
+        ).scalar_one_or_none()
         resultado = await sesion_pjud.buscar_y_extraer_privada(
-            causa.tipo, causa.rol, causa.anio, progreso=progreso
+            causa.tipo, causa.rol, causa.anio, progreso=progreso,
+            tribunal_nombre=tribunal_esperado,
         )
     else:
         resultado = await sesion_pjud.buscar_y_extraer(

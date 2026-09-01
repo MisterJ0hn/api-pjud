@@ -39,6 +39,53 @@ COMPETENCIAS = {"civil": "3", "laboral": "4", "cobranza": "6"}
 
 PAUSA_ENTRE_CONSULTAS_MS = 4000
 
+
+def _normalizar_tribunal(nombre: str | None) -> str:
+    """Normaliza el nombre de un tribunal para comparar ('18º Juzgado Civil de Santiago'
+    del <select> vs. el de la cabecera del modal): minusculas, 'º'->'°', espacios
+    colapsados."""
+    return re.sub(r"\s+", " ", (nombre or "").lower().replace("º", "°")).strip()
+
+
+# Selecciona la fila de la causa en la tabla de resultados por RIT. La Consulta Unificada
+# puede devolver la misma RIT en varios tribunales (p. ej. C-5656-2021 existe en el 1º y
+# en el 18º Juzgado Civil de Santiago); hay que elegir la del tribunal buscado y no la
+# primera. La ultima columna de la tabla es "Tribunal".
+JS_SELECCIONAR_FILA_RIT = """(args) => {
+    const {objetivo, tribunal} = args;
+    const norm = s => (s || '').toLowerCase().replace(/\\u00ba/g, '\\u00b0').replace(/\\s+/g, ' ').trim();
+    const tribCol = tr => {
+        const tds = Array.from(tr.querySelectorAll('td'));
+        return tds.length ? tds[tds.length - 1].textContent.trim() : '';
+    };
+    const candidatas = Array.from(document.querySelectorAll('#busRit td'))
+        .filter(td => td.textContent.trim() === objetivo)
+        .map(td => td.closest('tr'))
+        .filter(Boolean);
+    if (!candidatas.length) return {estado: 'no_encontrada'};
+
+    let fila = candidatas[0];
+    const t = norm(tribunal);
+    if (t && t !== 'todos') {
+        // Igualdad exacta (ya normalizada): un 'includes' daria falsos positivos entre
+        // ordinales ('2º' es substring de '22º').
+        const match = candidatas.find(tr => norm(tribCol(tr)) === t);
+        if (match) {
+            fila = match;
+        } else if (candidatas.length > 1) {
+            // Varias RIT iguales y ninguna del tribunal buscado -> ambiguo, no adivinar.
+            return {estado: 'tribunal_no_coincide', tribunales: candidatas.map(tribCol)};
+        }
+        // Un solo candidato: la busqueda ya venia filtrada por #conTribunal; una
+        // diferencia de formato con el <option> no deberia descartarlo (la cabecera
+        // del modal se verifica igual despues).
+    }
+    const firstTd = fila.querySelector('td');
+    const clickable = firstTd.querySelector('a,button,i,span') || firstTd;
+    clickable.click();
+    return {estado: 'ok', tribunal: tribCol(fila)};
+}"""
+
 # Extrae, por cada tabla, sus headers y sus filas -- cada fila trae tanto el texto de
 # cada celda (`valores`) como los enlaces/descargas resueltos DENTRO de esa celda
 # especifica (`enlaces`).
@@ -459,6 +506,10 @@ class PjudSessionAsync(_PjudModalScraper):
             await self._seleccionar_competencia_corte(competencia, corte)
             await page.select_option("#conTribunal", tribunal)
             await page.wait_for_timeout(300)
+            tribunal_esperado = await page.eval_on_selector(
+                "#conTribunal",
+                "el => el.selectedOptions.length ? el.selectedOptions[0].textContent.trim() : ''",
+            )
             await page.select_option("#conTipoCausa", tipo)
             await page.fill("#conRolCausa", str(rol))
             await page.fill("#conEraCausa", str(anio))
@@ -466,22 +517,19 @@ class PjudSessionAsync(_PjudModalScraper):
             await page.wait_for_timeout(1500)
 
             objetivo = f"{tipo}-{rol}-{anio}"
-            encontrada = await page.evaluate(
-                """(objetivo) => {
-                    const cell = Array.from(document.querySelectorAll('#busRit td'))
-                        .find(td => td.textContent.trim() === objetivo);
-                    if (!cell) return null;
-                    const row = cell.closest('tr');
-                    const firstTd = row.querySelector('td');
-                    const clickable = firstTd.querySelector('a,button,i,span') || firstTd;
-                    clickable.click();
-                    return true;
-                }""",
-                objetivo,
+            seleccion = await page.evaluate(
+                JS_SELECCIONAR_FILA_RIT, {"objetivo": objetivo, "tribunal": tribunal_esperado}
             )
 
-            if encontrada is None:
+            if seleccion["estado"] == "no_encontrada":
                 logger.info("Causa %s-%s-%s no encontrada", tipo, rol, anio)
+                return {"encontrada": False}
+            if seleccion["estado"] == "tribunal_no_coincide":
+                logger.warning(
+                    "Causa %s: PJUD devolvio resultados pero ninguno del tribunal esperado %r "
+                    "(tribunales en la busqueda: %s)",
+                    objetivo, tribunal_esperado, seleccion.get("tribunales"),
+                )
                 return {"encontrada": False}
 
             await page.wait_for_timeout(700)
@@ -490,6 +538,23 @@ class PjudSessionAsync(_PjudModalScraper):
                 return {"encontrada": True, "error": "No se pudo abrir el detalle de la causa"}
 
             detalle = await self._extraer_detalle_de_modal(modal_id)
+
+            # Verificacion final: el modal abierto debe ser del tribunal buscado.
+            trib_detalle = (detalle.get("cabecera", {}).get("campos", {}) or {}).get("Tribunal", "")
+            if tribunal_esperado and trib_detalle:
+                if _normalizar_tribunal(tribunal_esperado) != _normalizar_tribunal(trib_detalle):
+                    logger.error(
+                        "Causa %s: el detalle abierto es del tribunal %r, se esperaba %r",
+                        objetivo, trib_detalle, tribunal_esperado,
+                    )
+                    return {
+                        "encontrada": True,
+                        "error": (
+                            f"El detalle corresponde al tribunal '{trib_detalle}', "
+                            f"no a '{tribunal_esperado}'"
+                        ),
+                    }
+
             return {"encontrada": True, **detalle}
         finally:
             self._progreso = None
@@ -669,9 +734,15 @@ class PjudSessionPrivada(_PjudModalScraper):
             logger.exception("Error al activar el check de filtros")
         await page.wait_for_timeout(1200)
 
-    async def buscar_y_extraer_privada(self, tipo: str, rol, anio, progreso=None) -> dict:
+    async def buscar_y_extraer_privada(
+        self, tipo: str, rol, anio, progreso=None, tribunal_nombre: str | None = None
+    ) -> dict:
         """Busca la causa privada por Rit / Rol / Anio dentro de Mis Causas -> Civil y
-        extrae cabecera + cuadernos (mismo modal que la Consulta Unificada)."""
+        extrae cabecera + cuadernos (mismo modal que la Consulta Unificada).
+
+        `tribunal_nombre` (opcional): si se entrega, se verifica que el detalle abierto
+        sea de ese tribunal. Mis Causas no permite filtrar por tribunal, asi que si la
+        misma RIT existe en dos tribunales del usuario esta es la unica salvaguarda."""
         page = self._page
         self._progreso = progreso
         logger.info("Buscando causa privada %s-%s-%s", tipo, rol, anio)
@@ -721,6 +792,22 @@ class PjudSessionPrivada(_PjudModalScraper):
             await page.wait_for_timeout(800)
 
             detalle = await self._extraer_detalle_de_modal(self.MODAL_DETALLE)
+
+            trib_detalle = (detalle.get("cabecera", {}).get("campos", {}) or {}).get("Tribunal", "")
+            if tribunal_nombre and trib_detalle:
+                if _normalizar_tribunal(tribunal_nombre) != _normalizar_tribunal(trib_detalle):
+                    logger.error(
+                        "Causa privada %s: el detalle abierto es del tribunal %r, se esperaba %r",
+                        objetivo, trib_detalle, tribunal_nombre,
+                    )
+                    return {
+                        "encontrada": True,
+                        "error": (
+                            f"El detalle corresponde al tribunal '{trib_detalle}', "
+                            f"no a '{tribunal_nombre}'"
+                        ),
+                    }
+
             return {"encontrada": True, **detalle}
         finally:
             self._progreso = None
