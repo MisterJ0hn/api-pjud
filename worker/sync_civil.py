@@ -247,11 +247,13 @@ async def _persistir_docs_anexos_historia(
             )
 
 
-async def _folio_docs_completos(session: AsyncSession, mov_id: int, n_docs_esperado: int) -> bool:
+async def _folio_docs_completos(
+    session: AsyncSession, mov_id: int, cuaderno_id: int, n_docs_esperado: int
+) -> bool:
     """El folio ya tiene sus `n_docs_esperado` filas de documento, cada una vinculada a
-    un Documento cuyo archivo sigue en disco, y los anexos con Documento tambien tienen
-    su archivo. Si algo falta se devuelve False para que el folio se recomplete (y se
-    re-descargue lo que corresponda)."""
+    un Documento de ESTE cuaderno y con su archivo en disco (idem los anexos con
+    Documento). Si algo falta -- o si el Documento vinculado es de otro cuaderno (bug
+    viejo de clave_logica sin cuaderno) -- se devuelve False para recompletar el folio."""
     doc_ids = (
         await session.execute(
             select(MovimientoHistoriaDoc.documento_id).where(MovimientoHistoriaDoc.movimiento_id == mov_id)
@@ -272,10 +274,14 @@ async def _folio_docs_completos(session: AsyncSession, mov_id: int, n_docs_esper
     ids = [d for d in [*doc_ids, *anexo_doc_ids] if d is not None]
     if not ids:
         return True
-    rutas = (
-        await session.execute(select(Documento.ruta_archivo).where(Documento.id.in_(ids)))
-    ).scalars().all()
-    return len(rutas) == len(ids) and all(_archivo_en_disco(r) for r in rutas)
+    docs = (
+        await session.execute(
+            select(Documento.cuaderno_id, Documento.ruta_archivo).where(Documento.id.in_(ids))
+        )
+    ).all()
+    if len(docs) != len(ids):
+        return False
+    return all(cid == cuaderno_id and _archivo_en_disco(ruta) for cid, ruta in docs)
 
 
 async def _sincronizar_historia(
@@ -341,7 +347,9 @@ async def _sincronizar_historia(
             # exhortos distintos rara vez comparten el mismo folio previo) y lo ubica en
             # el orden. `folio` (el N de "[NE]") es unico dentro de un mismo bloque.
             ancla = ultimo_folio_normal if ultimo_folio_normal is not None else 0
-            clave_base = f"historia_exh{ancla}_{folio}"
+            # El cuaderno va en la clave: los folios se repiten entre cuadernos de la
+            # misma causa y Documento es unico por (causa_id, clave_logica).
+            clave_base = f"historia_c{cuaderno.numero}_exh{ancla}_{folio}"
             exh_ocurrencias[clave_base] = exh_ocurrencias.get(clave_base, 0) + 1
             if exh_ocurrencias[clave_base] > 1:
                 clave_base = f"{clave_base}_o{exh_ocurrencias[clave_base]}"
@@ -376,7 +384,7 @@ async def _sincronizar_historia(
             # Aunque el texto de la fila no cambio, se recompleta el folio si en BD
             # faltan documentos (una version vieja guardaba solo el primero) o si el
             # archivo de alguno ya no esta en disco (descarga fallida, archivo perdido).
-            if await _folio_docs_completos(session, existente.id, len(enlaces.get("Doc.") or [])):
+            if await _folio_docs_completos(session, existente.id, cuaderno.id, len(enlaces.get("Doc.") or [])):
                 # Sin cambios de contenido y todo en disco; solo puede haberse movido de
                 # posicion (PJUD agrego folios/exhortos arriba). No amerita descargar nada.
                 if existente.orden != idx:
@@ -399,7 +407,7 @@ async def _sincronizar_historia(
         await session.flush()
         await _persistir_docs_anexos_historia(
             session, sesion_pjud, causa, cuaderno, existente, fila, enlaces,
-            f"historia_folio{folio}", h,
+            f"historia_c{cuaderno.numero}_folio{folio}", h,
         )
         await session.commit()
 
@@ -458,7 +466,7 @@ async def _sincronizar_escritos_resolver(
                 select(EscritoResolver).where(EscritoResolver.cuaderno_id == cuaderno.id, EscritoResolver.contenido_hash == h)
             )
         ).scalar_one_or_none()
-        clave = f"escrito_{slug(valores.get('Fecha de Ingreso'))}_{slug(valores.get('Tipo Escrito'))}"
+        clave = f"escrito_c{cuaderno.numero}_{slug(valores.get('Fecha de Ingreso'))}_{slug(valores.get('Tipo Escrito'))}"
         if existente is not None:
             # Mismo escrito (mismo contenido): no se toca la fila, pero se revisa que su
             # documento siga en disco y se re-descarga si falta.
@@ -538,7 +546,7 @@ async def _sincronizar_exhortos(
             for i, url in enumerate(rol_destino_urls, start=1):
                 doc = await _obtener_o_descargar_documento(
                     session, sesion_pjud, causa.id, cuaderno.id, "exhorto",
-                    f"exhorto_{slug(rol_origen)}_{slug(tipo_exhorto)}_item{i}", cuaderno.numero, url,
+                    f"exhorto_c{cuaderno.numero}_{slug(rol_origen)}_{slug(tipo_exhorto)}_item{i}", cuaderno.numero, url,
                 )
                 session.add(ExhortoRolDestinoItem(rol_destino_id=grupo.id, documento_id=doc.id if doc else None, orden=i))
             hubo_cambios = True
