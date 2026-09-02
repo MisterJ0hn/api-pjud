@@ -51,15 +51,25 @@ CATEGORIAS_CABECERA = {
     "ebook": "ebook",
 }
 
-# Folio de un movimiento de Historia: "33" (normal) o "[6E]" (movimiento de un exhorto,
-# numerado aparte y a veces repetido entre exhortos de la misma causa).
+# Folio de un movimiento de Historia: "33" (normal), "[6E]" (movimiento de un exhorto,
+# numerado aparte y a veces repetido entre exhortos), o vacio (algunos tramites --
+# certificaciones, resoluciones de incidentes-- vienen sin folio).
 _FOLIO_NORMAL_RE = re.compile(r"^(\d+)$")
 _FOLIO_EXHORTO_RE = re.compile(r"^\[(\d+)\s*E\]$")
 
+# folio_texto de una fila sin folio. Empieza con "[" -> queda fuera del indice unico
+# parcial `uq_historia_cuaderno_folio` y entra en el borrado `folio_texto LIKE '[%'`,
+# asi que estas filas se reconstruyen enteras cada sync (no tienen clave natural).
+FOLIO_SIN_NUMERO = "[SF]"
 
-def _parsear_folio(folio_raw: str) -> tuple[str, int, bool] | None:
-    """(folio_texto, folio_numerico, es_exhorto) o None si el formato es desconocido."""
+
+def _parsear_folio(folio_raw: str) -> tuple[str, int | None, bool] | None:
+    """(folio_texto, folio_numerico|None, sin_clave_natural) o None si el formato es
+    desconocido. `sin_clave_natural` = True para exhortos y filas sin folio: no se
+    matchean por clave, se borran y reinsertan en cada sync."""
     folio_texto = (folio_raw or "").strip()
+    if not folio_texto or folio_texto == "-":
+        return FOLIO_SIN_NUMERO, None, True
     m = _FOLIO_NORMAL_RE.match(folio_texto)
     if m:
         return folio_texto, int(m.group(1)), False
@@ -338,18 +348,22 @@ async def _sincronizar_historia(
         if folio_parseado is None:
             logger.warning("Folio de historia con formato inesperado %r; se omite", valores.get("Folio"))
             continue
-        folio_texto, folio, es_exhorto = folio_parseado
+        folio_texto, folio, sin_clave_natural = folio_parseado
         h = hash_fila(valores)
 
-        if es_exhorto:
+        if sin_clave_natural:
             exhorto_nuevas.append((folio_texto, h))
-            # Ancla = folio normal inmediatamente anterior; identifica el exhorto (dos
-            # exhortos distintos rara vez comparten el mismo folio previo) y lo ubica en
-            # el orden. `folio` (el N de "[NE]") es unico dentro de un mismo bloque.
             ancla = ultimo_folio_normal if ultimo_folio_normal is not None else 0
-            # El cuaderno va en la clave: los folios se repiten entre cuadernos de la
-            # misma causa y Documento es unico por (causa_id, clave_logica).
-            clave_base = f"historia_c{cuaderno.numero}_exh{ancla}_{folio}"
+            if folio is None:
+                # Fila sin folio: ancla al folio normal previo para ubicarla en el orden.
+                clave_base = f"historia_c{cuaderno.numero}_sf{ancla}"
+            else:
+                # Exhorto. Ancla = folio normal inmediatamente anterior; identifica el
+                # exhorto (dos exhortos rara vez comparten el folio previo) y lo ubica en
+                # el orden. `folio` (el N de "[NE]") es unico dentro de un mismo bloque.
+                # El cuaderno va en la clave: los folios se repiten entre cuadernos y
+                # Documento es unico por (causa_id, clave_logica).
+                clave_base = f"historia_c{cuaderno.numero}_exh{ancla}_{folio}"
             exh_ocurrencias[clave_base] = exh_ocurrencias.get(clave_base, 0) + 1
             if exh_ocurrencias[clave_base] > 1:
                 clave_base = f"{clave_base}_o{exh_ocurrencias[clave_base]}"

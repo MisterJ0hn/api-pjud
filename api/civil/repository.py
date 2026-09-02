@@ -257,7 +257,8 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
         historia_items.append(
             HistoriaItem(
                 folio=h.folio,
-                folio_texto=h.folio_texto,
+                # "[SF]" es el marcador interno de una fila sin folio; hacia afuera va vacio.
+                folio_texto=None if h.folio_texto == "[SF]" else h.folio_texto,
                 doc=[HistoriaDocItem(doc=doc_url(d.documento_id)) for d in doc_rows],
                 anexo=[
                     HistoriaAnexoItem(doc=doc_url(a.documento_id), fecha=a.fecha, referencia=a.referencia)
