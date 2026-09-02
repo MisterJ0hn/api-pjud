@@ -45,6 +45,31 @@ def _recolectar_urls(resultado: dict) -> list[tuple[str, str]]:
     return urls
 
 
+async def _probar_una_url(sesion, url: str) -> None:
+    from scraper.pjud_client_async import _jwt_expirado
+
+    vencido, restante = _jwt_expirado(url)
+    if restante is not None:
+        estado = f"VENCIDO hace {-restante}s" if vencido else f"vence en {restante}s"
+        print(f"token JWT de la URL: {estado}")
+    page = sesion._page  # noqa: SLF001
+    try:
+        resp = await sesion._context.request.get(url, headers={"Referer": page.url})
+        body = await resp.body()
+        ct = resp.headers.get("content-type")
+        print(f"request -> HTTP {resp.status}  ct={ct!r}  {len(body)} bytes")
+        if not ct or "pdf" not in ct.lower():
+            print("--- cuerpo (no es PDF) ---")
+            print(body[:4000].decode("utf-8", "replace"))
+            print("--- fin cuerpo ---")
+        else:
+            print(f"inicio={body[:40]!r}")
+    except Exception as e:  # noqa: BLE001
+        print(f"request -> EXCEPCION {e}")
+    res = await sesion.descargar_bytes(url)
+    print(f"descargar_bytes -> {'None (descartado)' if res is None else f'OK {res[0]!r} {len(res[1])} bytes'}")
+
+
 async def _run(args) -> None:
     # Igual que el worker: PJUD bloquea el navegador headless, se corre "headed" contra
     # el Xvfb :99 que ya levanto el proceso principal del contenedor.
@@ -52,10 +77,20 @@ async def _run(args) -> None:
     if args.rut:
         sesion = PjudSessionPrivada(args.rut, args.clave, args.metodo, headless=headless)
         await sesion.iniciar()
-        resultado = await sesion.buscar_y_extraer_privada(args.tipo, args.rol, args.anio)
     else:
         sesion = PjudSessionAsync(headless=headless)
         await sesion.iniciar()
+
+    if args.url:
+        try:
+            await _probar_una_url(sesion, args.url)
+        finally:
+            await sesion.cerrar()
+        return
+
+    if args.rut:
+        resultado = await sesion.buscar_y_extraer_privada(args.tipo, args.rol, args.anio)
+    else:
         resultado = await sesion.buscar_y_extraer(
             args.competencia, str(args.corte), str(args.tribunal), args.tipo, args.rol, args.anio
         )
@@ -98,15 +133,19 @@ def main() -> None:
     p.add_argument("--competencia", default="civil")
     p.add_argument("--corte", type=int)
     p.add_argument("--tribunal", type=int)
-    p.add_argument("--tipo", required=True)
-    p.add_argument("--rol", type=int, required=True)
-    p.add_argument("--anio", type=int, required=True)
+    p.add_argument("--tipo")
+    p.add_argument("--rol", type=int)
+    p.add_argument("--anio", type=int)
     p.add_argument("--rut")
     p.add_argument("--clave")
     p.add_argument("--metodo", type=int, choices=(1, 2), default=1)
+    p.add_argument("--url", help="probar SOLO esta URL de documento (solo login + descarga)")
     args = p.parse_args()
-    if not args.rut and (args.corte is None or args.tribunal is None):
-        p.error("causa publica: --corte y --tribunal son obligatorios (o pasar --rut/--clave para modo privado)")
+    if not args.url:
+        if not (args.tipo and args.rol and args.anio):
+            p.error("--tipo/--rol/--anio son obligatorios (salvo que uses --url)")
+        if not args.rut and (args.corte is None or args.tribunal is None):
+            p.error("causa publica: --corte y --tribunal obligatorios (o --rut/--clave para modo privado)")
     asyncio.run(_run(args))
 
 

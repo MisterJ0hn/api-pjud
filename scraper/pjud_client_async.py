@@ -25,12 +25,33 @@ Diferencias de fondo respecto al cliente sync (`scraper/pjud_client.py`):
 """
 
 import base64
+import json
 import logging
 import re
+import time
 
 from playwright.async_api import async_playwright
 
 logger = logging.getLogger("pjud.scraper.async")
+
+
+def _jwt_expirado(url: str) -> tuple[bool, int | None]:
+    """Los documentos de PJUD se piden con una URL que lleva un JWT (?dtaDoc= / ?dtaCert=
+    / ...) con `exp` a 1 hora del scrape. Si el sync es largo, los tokens de las ultimas
+    filas ya vencieron al momento de descargar. Devuelve (vencido, segundos_restantes)."""
+    m = re.search(r"[?&]dta\w*=([^&]+)", url)
+    if not m:
+        return False, None
+    try:
+        payload = m.group(1).split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload)).get("exp")
+        if not exp:
+            return False, None
+        restante = int(exp - time.time())
+        return restante <= 0, restante
+    except Exception:
+        return False, None
 
 BASE_URL = "https://oficinajudicialvirtual.pjud.cl/includes/sesion-consultaunificada.php"
 HOME_URL = "https://oficinajudicialvirtual.pjud.cl/home/"
@@ -259,6 +280,16 @@ class _PjudModalScraper:
         """Descarga una URL de PJUD y valida que sea realmente un documento. Devuelve
         (content_type, bytes) o None. Intenta primero via `fetch` en la pagina (con la
         sesion completa) y cae al APIRequestContext solo si eso falla."""
+        vencido, restante = _jwt_expirado(url)
+        if vencido:
+            logger.warning(
+                "Descarga %s: el token de la URL ya VENCIO hace %ss (el scrape tardo demasiado "
+                "en llegar a esta descarga). Se intenta igual, pero PJUD probablemente rechace.",
+                url, -restante,
+            )
+        elif restante is not None and restante < 120:
+            logger.warning("Descarga %s: el token vence en %ss (al limite)", url, restante)
+
         # 1) fetch dentro de la pagina
         try:
             res = await self._page.evaluate(self._JS_FETCH_DOC, url)
@@ -849,20 +880,19 @@ class PjudSessionPrivada(_PjudModalScraper):
 
             detalle = await self._extraer_detalle_de_modal(self.MODAL_DETALLE)
 
+            # En Mis Causas la lista ya viene acotada a las causas del usuario y no se
+            # puede filtrar por tribunal. Si el nombre no coincide con el del catalogo se
+            # avisa fuerte, pero NO se aborta: el catalogo puede tener otro formato de
+            # nombre y un falso positivo bloquearia el sync de la causa por completo.
             trib_detalle = (detalle.get("cabecera", {}).get("campos", {}) or {}).get("Tribunal", "")
-            if tribunal_nombre and trib_detalle:
-                if _normalizar_tribunal(tribunal_nombre) != _normalizar_tribunal(trib_detalle):
-                    logger.error(
-                        "Causa privada %s: el detalle abierto es del tribunal %r, se esperaba %r",
-                        objetivo, trib_detalle, tribunal_nombre,
-                    )
-                    return {
-                        "encontrada": True,
-                        "error": (
-                            f"El detalle corresponde al tribunal '{trib_detalle}', "
-                            f"no a '{tribunal_nombre}'"
-                        ),
-                    }
+            if tribunal_nombre and trib_detalle and (
+                _normalizar_tribunal(tribunal_nombre) != _normalizar_tribunal(trib_detalle)
+            ):
+                logger.warning(
+                    "Causa privada %s: el detalle abierto dice tribunal %r y el catalogo %r "
+                    "(se continua igual; revisar si la RIT existe en dos tribunales del usuario)",
+                    objetivo, trib_detalle, tribunal_nombre,
+                )
 
             return {"encontrada": True, **detalle}
         finally:
