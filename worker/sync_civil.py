@@ -319,6 +319,11 @@ async def _sincronizar_historia(
     hubo_cambios = False
     exhorto_nuevas: list[tuple[str, str]] = []
     ultimo_folio_normal: int | None = None
+    # Cuando la causa tiene mas de un exhorto, la tabla Historia puede traer dos filas
+    # "[NE]" con el mismo N y el mismo folio-ancla (mismo contenido incluso). Sin este
+    # contador las dos generarian la misma `clave_logica` y la segunda reusaria el
+    # Documento de la primera -> su archivo real nunca se descarga.
+    exh_ocurrencias: dict[str, int] = {}
 
     for idx, fila in enumerate(filas):
         valores = fila["valores"]
@@ -337,6 +342,9 @@ async def _sincronizar_historia(
             # el orden. `folio` (el N de "[NE]") es unico dentro de un mismo bloque.
             ancla = ultimo_folio_normal if ultimo_folio_normal is not None else 0
             clave_base = f"historia_exh{ancla}_{folio}"
+            exh_ocurrencias[clave_base] = exh_ocurrencias.get(clave_base, 0) + 1
+            if exh_ocurrencias[clave_base] > 1:
+                clave_base = f"{clave_base}_o{exh_ocurrencias[clave_base]}"
             mov = MovimientoHistoria(
                 cuaderno_id=cuaderno.id,
                 folio=folio,
