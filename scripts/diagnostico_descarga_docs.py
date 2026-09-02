@@ -19,6 +19,7 @@ Uso (causa privada):
 import argparse
 import asyncio
 
+from api.config import settings
 from scraper.pjud_client_async import PjudSessionAsync, PjudSessionPrivada
 
 
@@ -45,12 +46,15 @@ def _recolectar_urls(resultado: dict) -> list[tuple[str, str]]:
 
 
 async def _run(args) -> None:
+    # Igual que el worker: PJUD bloquea el navegador headless, se corre "headed" contra
+    # el Xvfb :99 que ya levanto el proceso principal del contenedor.
+    headless = settings.playwright_headless
     if args.rut:
-        sesion = PjudSessionPrivada(args.rut, args.clave, args.metodo, headless=True)
+        sesion = PjudSessionPrivada(args.rut, args.clave, args.metodo, headless=headless)
         await sesion.iniciar()
         resultado = await sesion.buscar_y_extraer_privada(args.tipo, args.rol, args.anio)
     else:
-        sesion = PjudSessionAsync(headless=True)
+        sesion = PjudSessionAsync(headless=headless)
         await sesion.iniciar()
         resultado = await sesion.buscar_y_extraer(
             args.competencia, str(args.corte), str(args.tribunal), args.tipo, args.rol, args.anio
