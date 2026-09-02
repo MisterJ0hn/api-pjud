@@ -23,6 +23,23 @@ from api.config import settings
 from scraper.pjud_client_async import PjudSessionAsync, PjudSessionPrivada
 
 
+def _resumen_estructura(resultado: dict) -> None:
+    """Imprime cuadernos / secciones / nro de filas / folios de Historia, para ver si el
+    scraper esta capturando todo (p. ej. si un cuaderno viene truncado o paginado)."""
+    print("\n=== ESTRUCTURA EXTRAIDA ===")
+    for c in resultado.get("cuadernos", []):
+        print(f"\ncuaderno {c['numero']} ({c.get('nombre')})")
+        for sec_nombre, sec in c.get("secciones", {}).items():
+            filas = sec.get("filas", [])
+            extra = ""
+            if sec_nombre.strip().lower().startswith("histor"):
+                folios = [f.get("valores", {}).get("Folio", "?").strip() for f in filas]
+                con_doc = sum(1 for f in filas if (f.get("enlaces") or {}).get("Doc."))
+                extra = f"  folios={folios}  ({con_doc} con Doc.)"
+            print(f"  {sec_nombre}: {len(filas)} fila(s){extra}")
+    print("=" * 60)
+
+
 def _recolectar_urls(resultado: dict) -> list[tuple[str, str]]:
     """(etiqueta, url) de todos los documentos del detalle."""
     urls: list[tuple[str, str]] = []
@@ -103,6 +120,7 @@ async def _run(args) -> None:
             print("Error al extraer:", resultado["error"])
             return
 
+        _resumen_estructura(resultado)
         urls = _recolectar_urls(resultado)
         print(f"\n{len(urls)} enlaces de documento encontrados.\n" + "=" * 70)
 
