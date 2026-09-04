@@ -601,12 +601,26 @@ class PjudSessionAsync(_PjudModalScraper):
             await page.fill("#conRolCausa", str(rol))
             await page.fill("#conEraCausa", str(anio))
             await page.click('#busRit button[type="submit"]')
-            await page.wait_for_timeout(1500)
 
+            # La tabla de resultados se llena por AJAX; una espera fija puede ganarle a una
+            # respuesta lenta de PJUD (mas probable desde la IP del VPS que desde una red
+            # residencial) y leerse "no encontrada" con la tabla todavia vacia. Se
+            # reintenta la lectura varias veces antes de darla por buena (confirmado con
+            # C-49-2026: no encontrada en produccion, encontrada de inmediato en un retest
+            # manual).
             objetivo = f"{tipo}-{rol}-{anio}"
-            seleccion = await page.evaluate(
-                JS_SELECCIONAR_FILA_RIT, {"objetivo": objetivo, "tribunal": tribunal_esperado}
-            )
+            seleccion = None
+            for intento, espera_ms in enumerate((1500, 1500, 2000, 2000)):
+                await page.wait_for_timeout(espera_ms)
+                seleccion = await page.evaluate(
+                    JS_SELECCIONAR_FILA_RIT, {"objetivo": objetivo, "tribunal": tribunal_esperado}
+                )
+                if seleccion["estado"] != "no_encontrada":
+                    break
+                logger.info(
+                    "Causa %s-%s-%s: tabla de resultados vacia en el intento %d, reintentando",
+                    tipo, rol, anio, intento + 1,
+                )
 
             if seleccion["estado"] == "no_encontrada":
                 logger.info("Causa %s-%s-%s no encontrada", tipo, rol, anio)
