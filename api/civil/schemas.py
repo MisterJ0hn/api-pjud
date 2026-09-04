@@ -54,10 +54,14 @@ class CuadernoItem(BaseModel):
 
 class CausaDetalle(BaseModel):
     identificador: str
+    # "Sincronizando" | "Completo" | "Error".
     estado: str
     # Paso actual de una sincronizacion en curso (p. ej. "Obteniendo historia de
-    # cuaderno Principal"). None cuando estado == "Completo".
+    # cuaderno Principal"). None salvo cuando estado == "Sincronizando".
     detalle_estado: str | None = None
+    # Motivo de la falla (p. ej. "Causa C-1-2020 no encontrada en PJUD"). None salvo
+    # cuando estado == "Error".
+    ultimo_error: str | None = None
     fecha_ultima_sincronizacion: str | None = None
     rol: str | None = None
     fecha_ingreso: str | None = None

@@ -40,6 +40,7 @@ from api.db.models.sync_job import SyncJob
 
 CAMPO_ESTADO_SINCRONIZANDO = "Sincronizando"
 CAMPO_ESTADO_COMPLETO = "Completo"
+CAMPO_ESTADO_ERROR = "Error"
 
 
 async def obtener_o_crear_causa(
@@ -191,12 +192,21 @@ async def construir_causa_detalle(session: AsyncSession, causa: Causa) -> CausaD
     ).scalars().all()
     cuadernos = [CuadernoItem(id=c.numero, nombre=c.nombre) for c in cuadernos_rows]
 
-    estado_expuesto = CAMPO_ESTADO_COMPLETO if causa.estado_sync == CAMPO_ESTADO_COMPLETO else CAMPO_ESTADO_SINCRONIZANDO
+    # `estado_sync` en BD tiene un cuarto valor ("Pendiente", antes de que el worker
+    # tome el job) que hacia afuera se expone igual que "Sincronizando" -- para el
+    # cliente ambos significan "todavia no hay resultado, segui consultando".
+    if causa.estado_sync == CAMPO_ESTADO_COMPLETO:
+        estado_expuesto = CAMPO_ESTADO_COMPLETO
+    elif causa.estado_sync == CAMPO_ESTADO_ERROR:
+        estado_expuesto = CAMPO_ESTADO_ERROR
+    else:
+        estado_expuesto = CAMPO_ESTADO_SINCRONIZANDO
 
     return CausaDetalle(
         identificador=str(causa.id),
         estado=estado_expuesto,
-        detalle_estado=(None if estado_expuesto == CAMPO_ESTADO_COMPLETO else causa.sync_detalle),
+        detalle_estado=(causa.sync_detalle if estado_expuesto == CAMPO_ESTADO_SINCRONIZANDO else None),
+        ultimo_error=(causa.ultimo_error if estado_expuesto == CAMPO_ESTADO_ERROR else None),
         fecha_ultima_sincronizacion=(
             causa.fecha_ultima_sincronizacion.date().isoformat() if causa.fecha_ultima_sincronizacion else None
         ),

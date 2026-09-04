@@ -137,6 +137,10 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             causa = await session.get(Causa, job.causa_id)
             causa.estado_sync = "Error"
             causa.ultimo_error = str(exc)
+            # UPDATE explicito: `_reportar_progreso` pudo escribir sync_detalle desde otra
+            # sesion durante el intento; una asignacion ORM normal no lo detectaria si el
+            # valor en memoria de `causa` ya era None (ver comentario en el camino exitoso).
+            await session.execute(update(Causa).where(Causa.id == causa.id).values(sync_detalle=None))
             job.estado = "error"
             job.error_mensaje = str(exc)
             job.finalizado_en = datetime.now(timezone.utc)
@@ -157,6 +161,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             else:
                 causa.estado_sync = "Error"
                 causa.ultimo_error = str(exc)
+                await session.execute(update(Causa).where(Causa.id == causa.id).values(sync_detalle=None))
                 job.estado = "error"
                 job.error_mensaje = str(exc)
                 job.finalizado_en = datetime.now(timezone.utc)
