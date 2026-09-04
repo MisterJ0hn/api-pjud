@@ -448,8 +448,18 @@ async def _reemplazar_litigantes(session: AsyncSession, cuaderno: Cuaderno, tabl
 
 async def _reemplazar_notificaciones(session: AsyncSession, cuaderno: Cuaderno, tabla: dict) -> None:
     await session.execute(delete(Notificacion).where(Notificacion.cuaderno_id == cuaderno.id))
+    vistos = set()
     for fila in tabla.get("filas", []):
         v = fila["valores"]
+        h = hash_fila(v)
+        if h in vistos:
+            # PJUD a veces repite la misma notificacion (mismo litigante/tramite/fecha) sin
+            # ningun campo visible que las distinga entre si -- ver comentario de modulo
+            # sobre tablas sin clave natural. Se guarda una sola vez; insertar ambas viola
+            # uq_notificaciones_cuaderno_hash y tumba toda la sincronizacion (visto en
+            # C-49-2026: mismas notificaciones repetidas por meses).
+            continue
+        vistos.add(h)
         session.add(
             Notificacion(
                 cuaderno_id=cuaderno.id,
@@ -461,7 +471,7 @@ async def _reemplazar_notificaciones(session: AsyncSession, cuaderno: Cuaderno, 
                 nombre=v.get("Nombre"),
                 tramite=v.get("Trámite"),
                 observacion_fallida=v.get("Obs. Fallida"),
-                contenido_hash=hash_fila(v),
+                contenido_hash=h,
             )
         )
     await session.commit()
