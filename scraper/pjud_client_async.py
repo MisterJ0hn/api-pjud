@@ -27,6 +27,7 @@ Diferencias de fondo respecto al cliente sync (`scraper/pjud_client.py`):
 import base64
 import json
 import logging
+import os
 import re
 import time
 
@@ -578,6 +579,29 @@ class PjudSessionAsync(_PjudModalScraper):
         )
         return [o for o in options if o["value"] not in ("", "0")]
 
+    async def _guardar_diagnostico_no_encontrada(self, tipo: str, rol, anio) -> None:
+        """Guarda screenshot + HTML del formulario de busqueda cuando una causa que se
+        sabe que existe en PJUD vuelve 'no encontrada'. No hay forma de distinguir desde
+        el HTML si fue un bloqueo del WAF, una respuesta lenta que igual gano a los
+        reintentos, o un estado de pagina corrupto por la sesion larga del worker -- esto
+        deja evidencia real para la proxima vez en vez de seguir adivinando. Nunca debe
+        tumbar la busqueda: cualquier fallo al capturar se ignora."""
+        try:
+            from api.config import settings
+
+            carpeta = os.path.join(settings.log_dir, "diagnostico_no_encontrada")
+            os.makedirs(carpeta, exist_ok=True)
+            base = f"{tipo}-{rol}-{anio}_{int(time.time())}"
+            await self._page.screenshot(path=os.path.join(carpeta, f"{base}.png"), full_page=True)
+            html = await self._page.eval_on_selector(
+                "#busRit", "el => el.outerHTML"
+            ) if await self._page.query_selector("#busRit") else "(no existe #busRit)"
+            with open(os.path.join(carpeta, f"{base}.html"), "w", encoding="utf-8") as f:
+                f.write(f"<!-- url: {self._page.url} -->\n{html}")
+            logger.info("Diagnostico de 'no encontrada' guardado en %s.{png,html}", base)
+        except Exception:
+            logger.exception("No se pudo guardar el diagnostico de 'no encontrada'")
+
     async def buscar_y_extraer(
         self, competencia: str, corte: str, tribunal: str, tipo: str, rol, anio, progreso=None
     ) -> dict:
@@ -624,6 +648,7 @@ class PjudSessionAsync(_PjudModalScraper):
 
             if seleccion["estado"] == "no_encontrada":
                 logger.info("Causa %s-%s-%s no encontrada", tipo, rol, anio)
+                await self._guardar_diagnostico_no_encontrada(tipo, rol, anio)
                 return {"encontrada": False}
             if seleccion["estado"] == "tribunal_no_coincide":
                 logger.warning(

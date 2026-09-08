@@ -30,6 +30,14 @@ class MovimientoHistoria(Base):
     fecha_tramite: Mapped[str | None] = mapped_column(String(60), nullable=True)
     foja: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hash_contenido: Mapped[str] = mapped_column(String(64), nullable=False)
+    # PJUD puede repetir el mismo folio normal dos veces dentro del mismo cuaderno (visto
+    # en C-756-2022: folio 14 aparece dos veces en Historia, con contenido distinto). El
+    # folio deja de ser una clave natural por si solo; `ocurrencia` = 1a vez que aparece
+    # ese folio en el orden de la tabla, 2a vez, etc. -- se asigna recorriendo las filas
+    # en el mismo orden en cada sync, asumiendo que PJUD no reordena las repeticiones
+    # entre una sync y la siguiente (igual supuesto que ya se hace para el "ancla" de los
+    # exhortos).
+    ocurrencia: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     anexos: Mapped[list["MovimientoHistoriaAnexo"]] = relationship(
         back_populates="movimiento", cascade="all, delete-orphan"
@@ -41,13 +49,16 @@ class MovimientoHistoria(Base):
     )
 
     __table_args__ = (
-        # Folios normales: clave natural (cuaderno, folio) -> una fila por folio, se hace
-        # UPDATE cuando cambia el contenido. Indice parcial: excluye los "[NE]" de exhorto
-        # (que pueden repetirse dentro del cuaderno y se reemplazan enteros cada sync).
+        # Folios normales: clave natural (cuaderno, folio, ocurrencia) -> una fila por
+        # (folio, ocurrencia), se hace UPDATE cuando cambia el contenido. `ocurrencia`
+        # distingue folios repetidos (ver comentario de la columna); casi siempre vale 1.
+        # Indice parcial: excluye los "[NE]" de exhorto (que pueden repetirse dentro del
+        # cuaderno y se reemplazan enteros cada sync).
         Index(
             "uq_historia_cuaderno_folio",
             "cuaderno_id",
             "folio",
+            "ocurrencia",
             unique=True,
             postgresql_where=text("folio_texto NOT LIKE '[%'"),
         ),

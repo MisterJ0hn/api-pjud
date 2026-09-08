@@ -340,6 +340,11 @@ async def _sincronizar_historia(
     # contador las dos generarian la misma `clave_logica` y la segunda reusaria el
     # Documento de la primera -> su archivo real nunca se descarga.
     exh_ocurrencias: dict[str, int] = {}
+    # PJUD tambien puede repetir un folio normal dentro del mismo cuaderno (visto en
+    # C-756-2022: folio 14 dos veces en Historia, con contenido distinto). Sin esto la
+    # segunda fila hacia UPDATE sobre la primera (misma clave natural folio_texto) en vez
+    # de insertarse aparte, y la primera se perdia.
+    folio_ocurrencias: dict[int, int] = {}
 
     for idx, fila in enumerate(filas):
         valores = fila["valores"]
@@ -385,11 +390,18 @@ async def _sincronizar_historia(
 
         ultimo_folio_normal = folio
 
+        folio_ocurrencias[folio] = folio_ocurrencias.get(folio, 0) + 1
+        ocurrencia = folio_ocurrencias[folio]
+        clave_docs = f"historia_c{cuaderno.numero}_folio{folio}"
+        if ocurrencia > 1:
+            clave_docs = f"{clave_docs}_o{ocurrencia}"
+
         existente = (
             await session.execute(
                 select(MovimientoHistoria).where(
                     MovimientoHistoria.cuaderno_id == cuaderno.id,
                     MovimientoHistoria.folio_texto == folio_texto,
+                    MovimientoHistoria.ocurrencia == ocurrencia,
                 )
             )
         ).scalar_one_or_none()
@@ -410,7 +422,8 @@ async def _sincronizar_historia(
         hubo_cambios = True
         if existente is None:
             existente = MovimientoHistoria(
-                cuaderno_id=cuaderno.id, folio=folio, folio_texto=folio_texto, hash_contenido=h, orden=idx
+                cuaderno_id=cuaderno.id, folio=folio, folio_texto=folio_texto, hash_contenido=h,
+                orden=idx, ocurrencia=ocurrencia,
             )
             session.add(existente)
             await session.flush()
@@ -420,8 +433,7 @@ async def _sincronizar_historia(
         existente.hash_contenido = h
         await session.flush()
         await _persistir_docs_anexos_historia(
-            session, sesion_pjud, causa, cuaderno, existente, fila, enlaces,
-            f"historia_c{cuaderno.numero}_folio{folio}", h,
+            session, sesion_pjud, causa, cuaderno, existente, fila, enlaces, clave_docs, h,
         )
         await session.commit()
 
