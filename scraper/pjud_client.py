@@ -151,6 +151,11 @@ JS_EXTRAER_CABECERA = """(modalId) => {
                 const strongClone = clone.querySelector('strong');
                 if (strongClone) strongClone.remove();
                 campos[label] = clone.textContent.replace(/\\s+/g, ' ').trim();
+            } else {
+                // Celda sin <strong>: es la caratula, que va junto al F. Ing. y no
+                // tiene etiqueta en el modal (p. ej. "GONZALEZ / RODRIGUEZ").
+                const texto = td.textContent.replace(/\\s+/g, ' ').trim();
+                if (texto && !campos['Carátula']) campos['Carátula'] = texto;
             }
         });
     });

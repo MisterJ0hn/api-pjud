@@ -642,6 +642,7 @@ async def sincronizar_causa(
     cabecera = resultado["cabecera"]
     campos = cabecera.get("campos", {})
     causa.fecha_ingreso = campos.get("F. Ing.") or causa.fecha_ingreso
+    causa.caratula = campos.get("Carátula") or causa.caratula
     causa.est_adm = campos.get("Est. Adm.") or causa.est_adm
     causa.proceso = campos.get("Proc.") or causa.proceso
     causa.ubicacion = campos.get("Ubicación") or causa.ubicacion
