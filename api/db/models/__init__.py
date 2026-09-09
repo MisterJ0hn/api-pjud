@@ -2,6 +2,19 @@ from api.db.models.auth import ClienteApi, TokenAcceso, Usuario
 from api.db.models.cabecera import AnexoCausa, InformacionReceptor
 from api.db.models.causas import Causa, Cuaderno
 from api.db.models.documentos import Documento
+from api.db.models.familia import (
+    AnexoCausaFamilia,
+    CausaFamilia,
+    DiligenciaFamilia,
+    DocumentoFamilia,
+    LitiganteFamilia,
+    MateriaFamilia,
+    MovimientoHistoriaFamilia,
+    MovimientoHistoriaFamiliaAnexo,
+    MovimientoHistoriaFamiliaDoc,
+    NotificacionFamilia,
+    PlazoFamilia,
+)
 from api.db.models.movimientos import (
     EscritoResolver,
     Exhorto,
@@ -36,4 +49,15 @@ __all__ = [
     "InformacionReceptor",
     "SyncJob",
     "TribunalCatalogo",
+    "CausaFamilia",
+    "AnexoCausaFamilia",
+    "DocumentoFamilia",
+    "MovimientoHistoriaFamilia",
+    "MovimientoHistoriaFamiliaDoc",
+    "MovimientoHistoriaFamiliaAnexo",
+    "LitiganteFamilia",
+    "MateriaFamilia",
+    "PlazoFamilia",
+    "NotificacionFamilia",
+    "DiligenciaFamilia",
 ]

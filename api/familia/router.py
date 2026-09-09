@@ -7,54 +7,47 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import Principal, obtener_principal
 from api.civil.cripto import cifrar
+from api.civil.schemas import CausaRequest
 from api.common.rut import normalizar_credenciales
-from api.civil.repository import (
+from api.config import settings
+from api.db.models.familia import CausaFamilia
+from api.db.session_async import get_session
+from api.errors.exceptions import CampoInvalidoError, ConflictoSincronizacionError, NoEncontradoError
+from api.familia.repository import (
     buscar_causa,
     construir_causa_detalle,
     construir_movimientos,
     encolar_sync_job,
     intentar_lock_sincronizacion,
-    obtener_cuaderno,
     obtener_o_crear_causa,
 )
-from api.civil.schemas import (
-    CausaRequest,
-    ConsultarCivilResponse,
+from api.familia.schemas import (
+    ConsultarFamiliaResponse,
+    MovimientosFamiliaResponse,
     MovimientosRequest,
-    MovimientosResponse,
-    SincronizarCivilRequest,
+    SincronizarFamiliaRequest,
     SincronizarResponse,
 )
-from api.config import settings
-from api.db.models.causas import Causa
-from api.db.session_async import get_session
-from api.errors.exceptions import CampoInvalidoError, ConflictoSincronizacionError, NoEncontradoError
 
-router = APIRouter(tags=["civil"])
-
-COMPETENCIA = "civil"
+router = APIRouter(tags=["familia"])
 
 
-def _normalizar_credenciales(body: SincronizarCivilRequest) -> tuple[str, str, int] | None:
-    """Devuelve (rut, clave, metodo_login) si el request pide modo privado, o None si
-    es una sincronizacion publica (civil admite ambos)."""
-    return normalizar_credenciales(body.rut, body.clave, body.metodo_login, obligatorias=False)
-
-
-@router.post("/sincronizar_civil", response_model=SincronizarResponse)
-async def sincronizar_civil(
-    body: SincronizarCivilRequest,
+@router.post("/sincronizar_familia", response_model=SincronizarResponse)
+async def sincronizar_familia(
+    body: SincronizarFamiliaRequest,
     principal: Principal = Depends(obtener_principal),
     session: AsyncSession = Depends(get_session),
 ):
-    credenciales = _normalizar_credenciales(body)
-
-    causa = await obtener_o_crear_causa(
-        session, COMPETENCIA, body.corte, body.tribunal, body.tipo, body.rol, body.anio
+    # Familia es SIEMPRE privada: rut + clave + metodo_login obligatorios.
+    rut, clave, metodo_login = normalizar_credenciales(
+        body.rut, body.clave, body.metodo_login, obligatorias=True
     )
 
-    # Se leen antes del CAS de lock: ese commit expira los atributos del ORM y en el
-    # contexto async un lazy-load posterior fallaria.
+    causa = await obtener_o_crear_causa(
+        session, body.corte, body.tribunal, body.tipo, body.rol, body.anio
+    )
+
+    # Se leen antes del CAS de lock: ese commit expira los atributos del ORM.
     sync_iniciado_en = causa.sync_iniciado_en
 
     if causa.fecha_ultima_sincronizacion is not None:
@@ -73,7 +66,9 @@ async def sincronizar_civil(
                 reintentar_en=reintentar_en.isoformat(),
             )
 
-    lock_obtenido = await intentar_lock_sincronizacion(session, causa.id, settings.sync_lock_timeout_minutes)
+    lock_obtenido = await intentar_lock_sincronizacion(
+        session, causa.id, settings.sync_lock_timeout_minutes
+    )
     if not lock_obtenido:
         expira_en = None
         if sync_iniciado_en is not None:
@@ -90,36 +85,32 @@ async def sincronizar_civil(
             reintentar_en=expira_en,
         )
 
-    if credenciales is not None:
-        rut, clave, metodo_login = credenciales
-        await encolar_sync_job(
-            session,
-            causa.id,
-            rut_cifrado=cifrar(rut),
-            clave_cifrada=cifrar(clave),
-            metodo_login=metodo_login,
-        )
-    else:
-        await encolar_sync_job(session, causa.id)
+    await encolar_sync_job(
+        session,
+        causa.id,
+        rut_cifrado=cifrar(rut),
+        clave_cifrada=cifrar(clave),
+        metodo_login=metodo_login,
+    )
     return SincronizarResponse()
 
 
-@router.post("/consultar_civil", response_model=ConsultarCivilResponse)
-async def consultar_civil(
+@router.post("/consultar_familia", response_model=ConsultarFamiliaResponse)
+async def consultar_familia(
     body: CausaRequest,
     principal: Principal = Depends(obtener_principal),
     session: AsyncSession = Depends(get_session),
 ):
-    causa = await buscar_causa(session, COMPETENCIA, body.corte, body.tribunal, body.tipo, body.rol, body.anio)
+    causa = await buscar_causa(session, body.corte, body.tribunal, body.tipo, body.rol, body.anio)
     if causa is None:
         raise NoEncontradoError()
 
     detalle = await construir_causa_detalle(session, causa)
-    return ConsultarCivilResponse(causa=detalle)
+    return ConsultarFamiliaResponse(causa=detalle)
 
 
-@router.post("/consultar_movimientos_civil", response_model=MovimientosResponse)
-async def consultar_movimientos_civil(
+@router.post("/consultar_movimientos_familia", response_model=MovimientosFamiliaResponse)
+async def consultar_movimientos_familia(
     body: MovimientosRequest,
     principal: Principal = Depends(obtener_principal),
     session: AsyncSession = Depends(get_session),
@@ -129,12 +120,14 @@ async def consultar_movimientos_civil(
     except (ValueError, AttributeError):
         raise CampoInvalidoError("identificador")
 
-    causa = (await session.execute(select(Causa).where(Causa.id == causa_id))).scalar_one_or_none()
+    # Familia es cuaderno unico: el contrato conserva `cuadeno` pero solo admite 1.
+    if body.cuadeno != 1:
+        raise CampoInvalidoError("cuadeno")
+
+    causa = (
+        await session.execute(select(CausaFamilia).where(CausaFamilia.id == causa_id))
+    ).scalar_one_or_none()
     if causa is None:
         raise NoEncontradoError()
 
-    cuaderno = await obtener_cuaderno(session, causa.id, body.cuadeno)
-    if cuaderno is None:
-        raise NoEncontradoError()
-
-    return await construir_movimientos(session, causa, cuaderno)
+    return await construir_movimientos(session, causa)

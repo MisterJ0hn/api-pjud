@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db.models.causas import Causa, Cuaderno
 from api.db.models.documentos import Documento
+from api.db.models.familia import CausaFamilia, DocumentoFamilia
 from api.db.session_async import get_session
 
 router = APIRouter(prefix="/public", tags=["documentos"])
@@ -46,6 +47,41 @@ async def _resolver_y_servir(
         raise HTTPException(status_code=404, detail="No encontrado")
 
     return FileResponse(documento.ruta_archivo, media_type="application/pdf", filename=nombre_con_ext)
+
+
+async def _resolver_y_servir_familia(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    if not nombre_con_ext.lower().endswith(".pdf"):
+        raise HTTPException(status_code=404, detail="No encontrado")
+    nombre_archivo = nombre_con_ext[: -len(".pdf")]
+
+    try:
+        cid = uuid.UUID(causa_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    causa = (await session.execute(select(CausaFamilia).where(CausaFamilia.id == cid))).scalar_one_or_none()
+    if causa is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoFamilia).where(
+                DocumentoFamilia.causa_familia_id == causa.id,
+                DocumentoFamilia.nombre_archivo == nombre_archivo,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type="application/pdf", filename=nombre_con_ext)
+
+
+# Declarada ANTES de las rutas civiles de 2 segmentos para que `/public/familia/<uuid>/<name>`
+# no la agarre `documento_cuaderno` con causa_id="familia".
+@router.get("/familia/{causa_id}/{nombre_archivo}")
+async def documento_familia(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_familia(session, causa_id, nombre_archivo)
 
 
 @router.get("/{causa_id}/{nombre_archivo}")

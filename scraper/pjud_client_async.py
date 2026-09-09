@@ -122,19 +122,29 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
         if (celdas.length === 0) return null;
         const valores = {};
         const enlaces = {};
+        const posts = {};
         const popups = {};
         celdas.forEach((td, i) => {
             const header = headers[i] || ('col' + i);
             valores[header] = td.textContent.trim();
             const urls = [];
             Array.from(td.querySelectorAll('form')).forEach(form => {
-                if ((form.getAttribute('method') || '').toLowerCase() !== 'get') return;
-                const input = form.querySelector('input');
+                const input = form.querySelector('input[type="hidden"], input:not([type])') || form.querySelector('input');
                 const action = form.getAttribute('action');
-                if (!input || !action) return;
-                const url = new URL(action, location.href);
-                url.searchParams.set(input.name, input.value);
-                urls.push(url.toString());
+                if (!input || !action || !input.name) return;
+                const metodo = (form.getAttribute('method') || 'get').toLowerCase();
+                if (metodo === 'get') {
+                    const url = new URL(action, location.href);
+                    url.searchParams.set(input.name, input.value);
+                    urls.push(url.toString());
+                } else {
+                    // Form POST (p. ej. docFamiliaSii.php): el documento se pide con el
+                    // JWT en el body. Se guarda aparte para descargar_post_bytes().
+                    (posts[header] = posts[header] || []).push({
+                        url: new URL(action, location.href).toString(),
+                        field: input.name, value: input.value,
+                    });
+                }
             });
             Array.from(td.querySelectorAll('a[href]')).forEach(a => {
                 const href = a.getAttribute('href');
@@ -150,7 +160,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
             });
             if (urls.length) enlaces[header] = urls;
         });
-        return {valores, enlaces, popups};
+        return {valores, enlaces, posts, popups};
     }).filter(f => f !== null);
     return {headers, filas};
 })"""
@@ -208,8 +218,9 @@ JS_CERRAR_MODAL = """(modalId) => {
 }"""
 
 
-def _es_seccion_historia(nombre: str) -> bool:
-    return (nombre or "").strip().lower().startswith("historia")
+def _es_seccion_historia(nombre: str, prefijos: tuple[str, ...] = ("historia",)) -> bool:
+    n = (nombre or "").strip().lower()
+    return any(n.startswith(p) for p in prefijos)
 
 
 class CausaNoEncontrada(Exception):
@@ -232,6 +243,13 @@ class _PjudModalScraper:
     # Callback opcional `async (texto: str) -> None` para reportar el paso actual de la
     # extraccion (lo setea el worker por job; ver worker/main.py).
     _progreso = None
+    # Ids de los popups que puede abrir la columna "Anexo(s)" de Historia/Movimientos.
+    # Civil: `modalAnexoSolicitudCivil`. Familia: `modalAnexoEscritoFamilia` (Anexo del
+    # Escrito, GET) y `modalSIIFamilia` (Documentos SII, POST).
+    MODALES_ANEXO_HISTORIA = ("modalAnexoSolicitudCivil",)
+    # Prefijos del nombre de la pestana que se trata como "Historia" (dispara la
+    # extraccion de anexos por popup). Familia la llama "Movimientos".
+    PREFIJOS_HISTORIA = ("historia",)
 
     async def _reportar(self, texto: str) -> None:
         if self._progreso is None:
@@ -248,6 +266,27 @@ class _PjudModalScraper:
     _JS_FETCH_DOC = """async (url) => {
         try {
             const r = await fetch(url, {credentials: 'include', redirect: 'follow'});
+            const buf = await r.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            let bin = '';
+            const CHUNK = 0x8000;
+            for (let i = 0; i < bytes.length; i += CHUNK) {
+                bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+            }
+            return {ok: r.ok, status: r.status,
+                    contentType: r.headers.get('content-type') || '', b64: btoa(bin)};
+        } catch (e) {
+            return {error: String(e)};
+        }
+    }"""
+
+    # Igual que _JS_FETCH_DOC pero POST con el JWT en el body (form-urlencoded). Lo usan
+    # los anexos SII de Familia (docFamiliaSii.php es method=POST).
+    _JS_FETCH_DOC_POST = """async ([url, field, value]) => {
+        try {
+            const body = new URLSearchParams(); body.set(field, value);
+            const r = await fetch(url, {method: 'POST', credentials: 'include', redirect: 'follow',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body.toString()});
             const buf = await r.arrayBuffer();
             const bytes = new Uint8Array(buf);
             let bin = '';
@@ -331,6 +370,29 @@ class _PjudModalScraper:
             logger.exception("Error al descargar %s", url)
             return None
 
+    async def descargar_post_bytes(self, url: str, field: str, value: str) -> tuple[str, bytes] | None:
+        """Como `descargar_bytes` pero con POST (JWT en el body). Para los anexos SII de
+        Familia (docFamiliaSii.php). Solo via fetch en la pagina (sin fallback)."""
+        vencido, _ = _jwt_expirado(f"?{field}={value}")
+        if vencido:
+            logger.warning("Descarga POST %s: el token ya vencio; se intenta igual", url)
+        try:
+            res = await self._page.evaluate(self._JS_FETCH_DOC_POST, [url, field, value])
+        except Exception:
+            logger.exception("Error evaluando fetch POST para %s", url)
+            return None
+        if not res or res.get("error"):
+            logger.warning("fetch POST de %s fallo: %s", url, res and res.get("error"))
+            return None
+        if not res.get("ok"):
+            logger.warning("Descarga POST fallida (HTTP %s) para %s", res.get("status"), url)
+            return None
+        cuerpo = base64.b64decode(res.get("b64") or "")
+        ct = res.get("contentType") or ""
+        if self._validar_documento(ct, cuerpo, url):
+            return ct.split(";")[0].strip().lower() or "application/octet-stream", cuerpo
+        return None
+
     async def _extraer_filas_con_enlaces(self, selector: str) -> list[dict]:
         return await self._page.eval_on_selector_all(f"{selector} table", JS_EXTRAER_FILAS_CON_ENLACES)
 
@@ -391,31 +453,43 @@ class _PjudModalScraper:
             pane_id = href[1:]
             tablas = await self._extraer_filas_con_enlaces(f"#{pane_id}")
             seccion = tablas[0] if tablas else {"headers": [], "filas": []}
-            if _es_seccion_historia(tab["nombre"]):
+            if _es_seccion_historia(tab["nombre"], self.PREFIJOS_HISTORIA):
                 await self._extraer_anexos_popup_historia(pane_id, seccion)
             secciones[tab["nombre"]] = seccion
         return secciones
 
     async def _extraer_anexos_popup_historia(self, pane_id: str, seccion: dict) -> None:
-        """En Historia la columna "Anexo" puede ser una carpeta que abre el popup
-        `#modalAnexoSolicitudCivil` (carga por AJAX una tabla Doc./Fecha/Referencia).
-        Por cada fila que la tenga, abre el popup, vuelca sus filas en
-        `fila["anexos_popup"] = [{"doc": url|None, "fecha": str, "referencia": str}, ...]`
-        y resume el contenido en `valores["Anexo"]` para que el hash de la fila (worker)
-        sea sensible a cambios en los anexos."""
+        """La columna "Anexo(s)" de Historia/Movimientos puede ser una carpeta que abre un
+        popup por AJAX. Segun la competencia hay 1 o varios popups posibles
+        (`MODALES_ANEXO_HISTORIA`); en Familia: `modalAnexoEscritoFamilia` (Anexo del
+        Escrito) y `modalSIIFamilia` (Documentos SII, descargas por POST).
+
+        Por cada fila con carpeta abre el popup que corresponda y vuelca sus filas en
+        `fila["anexos_popup"] = [{"doc": url|None, "doc_post": {url,field,value}|None,
+        "valores": {...}, "popup": <id>}, ...]`. Ademas resume el contenido en la celda de
+        origen para que el hash de la fila (worker) detecte altas/bajas de anexos."""
         page = self._page
+        ids_conocidos = set(self.MODALES_ANEXO_HISTORIA)
         filas = seccion.get("filas", [])
         for idx, fila in enumerate(filas):
             popups = fila.get("popups") or {}
-            col_anexo = next(
-                (col for col, lst in popups.items() if "#modalAnexoSolicitudCivil" in lst), None
+            match = next(
+                (
+                    (col, href[1:])
+                    for col, lst in popups.items()
+                    for href in lst
+                    if href.startswith("#") and href[1:] in ids_conocidos
+                ),
+                None,
             )
-            if col_anexo is None:
+            if match is None:
                 continue
+            col_anexo, popup_id = match
+            popup_href = f"#{popup_id}"
             # Localiza el <a> de ESTA fila (mismo criterio de filas que
             # JS_EXTRAER_FILAS_CON_ENLACES: filas de tbody con >= 1 <td>).
             clicked = await page.evaluate(
-                """([paneId, idx]) => {
+                """([paneId, idx, popupHref]) => {
                     const cont = document.getElementById(paneId);
                     const t = cont && cont.querySelector('table');
                     if (!t) return false;
@@ -424,42 +498,44 @@ class _PjudModalScraper:
                     const conCeldas = Array.from(rows).filter(tr => tr.querySelectorAll('td').length);
                     const tr = conCeldas[idx];
                     if (!tr) return false;
-                    const a = tr.querySelector('a[data-toggle="modal"][href="#modalAnexoSolicitudCivil"]');
+                    const a = tr.querySelector('a[data-toggle="modal"][href="' + popupHref + '"]');
                     if (!a) return false;
                     a.click();
                     return true;
                 }""",
-                [pane_id, idx],
+                [pane_id, idx, popup_href],
             )
             if not clicked:
                 continue
             await page.wait_for_timeout(1600)  # el contenido del popup carga por AJAX
-            tablas = await self._extraer_filas_con_enlaces("#modalAnexoSolicitudCivil")
+            tablas = await self._extraer_filas_con_enlaces(f"#{popup_id}")
             popup = tablas[0] if tablas else {"filas": []}
             anexos = []
             for pf in popup.get("filas", []):
                 v = pf.get("valores", {})
                 docs = (pf.get("enlaces") or {}).get("Doc.") or []
+                posts = (pf.get("posts") or {}).get("Doc.") or []
                 anexos.append(
                     {
                         "doc": docs[0] if docs else None,
-                        "fecha": v.get("Fecha"),
-                        "referencia": v.get("Referencia"),
+                        "doc_post": posts[0] if posts else None,
+                        # Columnas crudas del popup: el worker las mapea segun `popup`.
+                        "valores": v,
+                        "popup": popup_id,
                     }
                 )
-            fila["anexos_popup"] = anexos
-            # Resume el popup en la celda de origen para que el hash de la fila (worker)
-            # detecte altas/bajas de anexos en re-sincronizaciones.
+            fila.setdefault("anexos_popup", []).extend(anexos)
             fila.setdefault("valores", {})[col_anexo] = " | ".join(
-                f"{a.get('fecha') or ''}~{a.get('referencia') or ''}" for a in anexos
+                "~".join(str(x) for x in a.get("valores", {}).values()) for a in anexos
             )
             await page.evaluate(
-                """() => {
-                    const m = document.getElementById('modalAnexoSolicitudCivil');
+                """(popupId) => {
+                    const m = document.getElementById(popupId);
                     if (!m) return;
                     const c = m.querySelector('.close, button.close, [data-dismiss="modal"]');
                     if (c) c.click();
-                }"""
+                }""",
+                popup_id,
             )
             await page.wait_for_timeout(300)
 
@@ -716,6 +792,19 @@ class PjudSessionPrivada(_PjudModalScraper):
 
     MODAL_DETALLE = "modalDetalleMisCauCivil"
 
+    # Selectores del area privada "Mis Causas" -> pestana de la competencia. La subclase
+    # de Familia (`PjudSessionFamiliaPrivada`) los sobreescribe con los suyos; el resto
+    # del flujo (login, filtros, apertura del detalle, extraccion del modal) es identico.
+    NOMBRE_COMPETENCIA = "Civil"  # solo para logs
+    TAB_COMPETENCIA = "civilTab"  # id del <a data-toggle="tab"> de la pestana
+    PANE_COMPETENCIA = "tab3"  # id del <div> pane con la tabla de resultados
+    CHECK_FILTROS = "filtroMisCauCiv"
+    CAMPO_TIPO = "tipoMisCauCiv"
+    CAMPO_ROL = "rolMisCauCiv"
+    CAMPO_ANIO = "anhoMisCauCiv"
+    CAMPO_ESTADO = "estadoCausaMisCauCiv"
+    BTN_BUSCAR = "btnConsultaMisCauCiv"
+
     def __init__(self, rut: str, clave: str, metodo_login: int, headless: bool = False):
         self._rut = rut
         self._clave = clave
@@ -825,14 +914,15 @@ class PjudSessionPrivada(_PjudModalScraper):
         await page.wait_for_timeout(800)
         await page.click("#login-submit")
 
-    # --- Busqueda en "Mis Causas" / pestana "Civil" ---------------------------
+    # --- Busqueda en "Mis Causas" / pestana de la competencia -----------------
 
-    async def _ir_a_mis_causas_civil(self) -> None:
+    async def _ir_a_mis_causas(self) -> None:
         page = self._page
-        # La seccion "Mis Causas" (y con ella la pestana #civilTab) carga por AJAX; se
-        # reintenta un par de veces porque a veces el indexN todavia esta inicializando.
-        for intento in range(4):
-            if await page.query_selector("#civilTab"):
+        tab_sel = f"#{self.TAB_COMPETENCIA}"
+        # La seccion "Mis Causas" (y con ella la pestana) carga por AJAX; se reintenta un
+        # par de veces porque a veces el indexN todavia esta inicializando.
+        for _ in range(4):
+            if await page.query_selector(tab_sel):
                 break
             try:
                 await page.click("text=Mis Causas", timeout=6000)
@@ -842,25 +932,28 @@ class PjudSessionPrivada(_PjudModalScraper):
                 except Exception:
                     pass
             await page.wait_for_timeout(4000)
-        await page.wait_for_selector("#civilTab", timeout=15000)
-        await page.click("#civilTab")
+        await page.wait_for_selector(tab_sel, timeout=15000)
+        await page.click(tab_sel)
         await page.wait_for_timeout(2500)
 
     async def _activar_filtros(self) -> None:
         page = self._page
-        # #filtroMisCauCiv es un checkbox (data-toggle="collapse" -> #collFiltrosCiv) que
-        # queda fuera de viewport; se activa por JS si no esta ya marcado.
+        # El checkbox de filtros (data-toggle="collapse") queda fuera de viewport; se
+        # activa por JS si no esta ya marcado.
         try:
             ya = await page.evaluate(
-                """() => {
-                    const c = document.getElementById('filtroMisCauCiv');
+                """(checkId) => {
+                    const c = document.getElementById(checkId);
                     if (!c) return null;
                     if (!c.checked) c.click();
                     return true;
-                }"""
+                }""",
+                self.CHECK_FILTROS,
             )
             if ya is None:
-                logger.warning("No se encontro el check #filtroMisCauCiv en la pestana Civil")
+                logger.warning(
+                    "No se encontro el check #%s en la pestana %s", self.CHECK_FILTROS, self.NOMBRE_COMPETENCIA
+                )
         except Exception:
             logger.exception("Error al activar el check de filtros")
         await page.wait_for_timeout(1200)
@@ -868,41 +961,42 @@ class PjudSessionPrivada(_PjudModalScraper):
     async def buscar_y_extraer_privada(
         self, tipo: str, rol, anio, progreso=None, tribunal_nombre: str | None = None
     ) -> dict:
-        """Busca la causa privada por Rit / Rol / Anio dentro de Mis Causas -> Civil y
-        extrae cabecera + cuadernos (mismo modal que la Consulta Unificada).
+        """Busca la causa privada por Rit / Rol / Anio dentro de Mis Causas -> pestana de
+        la competencia y extrae cabecera + cuadernos (mismo modal que la Consulta
+        Unificada).
 
         `tribunal_nombre` (opcional): si se entrega, se verifica que el detalle abierto
         sea de ese tribunal. Mis Causas no permite filtrar por tribunal, asi que si la
         misma RIT existe en dos tribunales del usuario esta es la unica salvaguarda."""
         page = self._page
         self._progreso = progreso
-        logger.info("Buscando causa privada %s-%s-%s", tipo, rol, anio)
+        logger.info("Buscando causa privada %s %s-%s-%s", self.NOMBRE_COMPETENCIA, tipo, rol, anio)
         try:
             await self._reportar("Buscando la causa en Mis Causas")
-            await self._ir_a_mis_causas_civil()
+            await self._ir_a_mis_causas()
             await self._activar_filtros()
 
             try:
-                await page.select_option("#tipoMisCauCiv", value=tipo)
+                await page.select_option(f"#{self.CAMPO_TIPO}", value=tipo)
             except Exception:
-                logger.warning("No se pudo seleccionar el tipo '%s' en #tipoMisCauCiv", tipo)
-            await page.fill("#rolMisCauCiv", str(rol))
-            await page.fill("#anhoMisCauCiv", str(anio))
+                logger.warning("No se pudo seleccionar el tipo '%s' en #%s", tipo, self.CAMPO_TIPO)
+            await page.fill(f"#{self.CAMPO_ROL}", str(rol))
+            await page.fill(f"#{self.CAMPO_ANIO}", str(anio))
             # El filtro de Estado viene por defecto en "Tramitacion"; se limpia para no
             # excluir causas en otros estados (archivadas, concluidas, etc.).
             try:
-                await page.select_option("#estadoCausaMisCauCiv", [])
+                await page.select_option(f"#{self.CAMPO_ESTADO}", [])
             except Exception:
                 pass
 
-            await page.click("#btnConsultaMisCauCiv")
+            await page.click(f"#{self.BTN_BUSCAR}")
             await page.wait_for_timeout(3500)
 
             objetivo = f"{tipo}-{rol}-{anio}"
             abierta = await page.evaluate(
-                """(objetivo) => {
+                """([objetivo, paneId]) => {
                     const norm = s => (s || '').replace(/\\s+/g, '').toUpperCase();
-                    const cell = Array.from(document.querySelectorAll('#tab3 td'))
+                    const cell = Array.from(document.querySelectorAll('#' + paneId + ' td'))
                         .find(td => norm(td.textContent).includes(norm(objetivo)));
                     if (!cell) return null;
                     const row = cell.closest('tr');
@@ -910,7 +1004,7 @@ class PjudSessionPrivada(_PjudModalScraper):
                     clickable.click();
                     return true;
                 }""",
-                objetivo,
+                [objetivo, self.PANE_COMPETENCIA],
             )
             if abierta is None:
                 logger.info("Causa privada %s no encontrada en Mis Causas", objetivo)
@@ -942,3 +1036,35 @@ class PjudSessionPrivada(_PjudModalScraper):
         finally:
             self._progreso = None
             await page.wait_for_timeout(PAUSA_ENTRE_CONSULTAS_MS)
+
+
+class PjudSessionFamiliaPrivada(PjudSessionPrivada):
+    """Igual que `PjudSessionPrivada` pero para la pestana "Familia" de Mis Causas.
+
+    Login (`_login` / Clave PJ / Clave Unica), activacion de filtros, apertura del
+    detalle y extraccion del modal (`_extraer_detalle_de_modal`) son identicos: solo
+    cambian los ids de la pestana, los campos de filtro y el modal de detalle. Familia
+    es SIEMPRE cuaderno unico, asi que `_extraer_detalle_de_modal` cae en la rama
+    "Principal" (no hay <select> de cuadernos).
+
+    Selectores confirmados contra `ejemplos/causa familia/*.html` (Mis Causas -> pestana
+    "Familia" #tab7). La pestana de secciones "Movimientos" hace de "Historia".
+    """
+
+    NOMBRE_COMPETENCIA = "Familia"
+    TAB_COMPETENCIA = "familiaTab"
+    PANE_COMPETENCIA = "tab7"
+    CHECK_FILTROS = "filtroMisCauFam"
+    CAMPO_TIPO = "tipoMisCauFam"
+    CAMPO_ROL = "rolMisCauFam"
+    CAMPO_ANIO = "anhoMisCauFam"
+    CAMPO_ESTADO = "estadoCausaMisCauFam"
+    BTN_BUSCAR = "btnConsultaMisCauFam"
+    MODAL_DETALLE = "modalDetalleMisCauFamilia"
+    # Carpetas de la columna "Anexos" de Movimientos: `modalAnexoEscritoFamilia`
+    # (Anexo del Escrito -- cols Folio/Doc./Fecha/Nombre Documento/Observación, descarga
+    # GET docAnexoEscritoFamilia.php) y `modalSIIFamilia` (Documentos SII -- cols
+    # Formulario/Rut Litigante/Nombre Litigante/Fecha Recepción, descarga POST
+    # docFamiliaSii.php). Validado en vivo con C-2973-2025.
+    MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoFamilia", "modalSIIFamilia")
+    PREFIJOS_HISTORIA = ("historia", "movimiento")

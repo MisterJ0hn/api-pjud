@@ -9,9 +9,13 @@ Uso (causa publica):
     docker compose exec worker python -m scripts.diagnostico_descarga_docs \\
         --competencia civil --corte 90 --tribunal 276 --tipo C --rol 5656 --anio 2021
 
-Uso (causa privada):
+Uso (causa privada civil):
     docker compose exec worker python -m scripts.diagnostico_descarga_docs \\
         --tipo C --rol 5656 --anio 2021 --rut 12345678-9 --clave MICLAVE --metodo 1
+
+Uso (causa privada familia -- agregar --familia):
+    docker compose exec worker python -m scripts.diagnostico_descarga_docs \\
+        --familia --tipo F --rol 200 --anio 2026 --rut 12345678-9 --clave MICLAVE --metodo 1
 
     --metodo 1 = Clave Poder Judicial, 2 = Clave Unica.
 """
@@ -20,7 +24,11 @@ import argparse
 import asyncio
 
 from api.config import settings
-from scraper.pjud_client_async import PjudSessionAsync, PjudSessionPrivada
+from scraper.pjud_client_async import (
+    PjudSessionAsync,
+    PjudSessionFamiliaPrivada,
+    PjudSessionPrivada,
+)
 
 
 def _resumen_estructura(resultado: dict) -> None:
@@ -32,7 +40,7 @@ def _resumen_estructura(resultado: dict) -> None:
         for sec_nombre, sec in c.get("secciones", {}).items():
             filas = sec.get("filas", [])
             extra = ""
-            if sec_nombre.strip().lower().startswith("histor"):
+            if sec_nombre.strip().lower().startswith(("histor", "movimiento")):
                 folios = [f.get("valores", {}).get("Folio", "?").strip() for f in filas]
                 con_doc = sum(1 for f in filas if (f.get("enlaces") or {}).get("Doc."))
                 extra = f"  folios={folios}  ({con_doc} con Doc.)"
@@ -59,6 +67,10 @@ def _recolectar_urls(resultado: dict) -> list[tuple[str, str]]:
                 for i, a in enumerate(fila.get("anexos_popup") or [], start=1):
                     if a.get("doc"):
                         urls.append((f"cuad{c['numero']}/{sec_nombre}/anexo_popup{i}", a["doc"]))
+                    elif a.get("doc_post"):
+                        # descarga POST (anexos SII de Familia): se anota, no se prueba aca.
+                        p = a["doc_post"]
+                        urls.append((f"cuad{c['numero']}/{sec_nombre}/anexo_popup{i} [POST -> no probado]", p["url"]))
     return urls
 
 
@@ -91,7 +103,10 @@ async def _run(args) -> None:
     # Igual que el worker: PJUD bloquea el navegador headless, se corre "headed" contra
     # el Xvfb :99 que ya levanto el proceso principal del contenedor.
     headless = settings.playwright_headless
-    if args.rut:
+    if args.rut and args.familia:
+        sesion = PjudSessionFamiliaPrivada(args.rut, args.clave, args.metodo, headless=headless)
+        await sesion.iniciar()
+    elif args.rut:
         sesion = PjudSessionPrivada(args.rut, args.clave, args.metodo, headless=headless)
         await sesion.iniciar()
     else:
@@ -157,6 +172,7 @@ def main() -> None:
     p.add_argument("--rut")
     p.add_argument("--clave")
     p.add_argument("--metodo", type=int, choices=(1, 2), default=1)
+    p.add_argument("--familia", action="store_true", help="causa de Familia (pestana Familia de Mis Causas)")
     p.add_argument("--url", help="probar SOLO esta URL de documento (solo login + descarga)")
     args = p.parse_args()
     if not args.url:

@@ -16,6 +16,7 @@ from sqlalchemy import select, update
 from api.civil.cripto import descifrar
 from api.config import settings
 from api.db.models.causas import Causa
+from api.db.models.familia import CausaFamilia
 from api.db.models.sync_job import SyncJob
 from api.db.session_async import AsyncSessionLocal
 from api.logging_config import configurar_logger
@@ -23,9 +24,11 @@ from scraper.pjud_client_async import (
     CausaNoEncontrada,
     LoginPrivadoError,
     PjudSessionAsync,
+    PjudSessionFamiliaPrivada,
     PjudSessionPrivada,
 )
 from worker.sync_civil import sincronizar_causa
+from worker.sync_familia import sincronizar_causa_familia
 
 logger = configurar_logger("pjud.worker", "worker.log")
 
@@ -34,13 +37,18 @@ PACING_ENTRE_JOBS_S = 7
 MAX_INTENTOS = 2
 
 
-async def _reportar_progreso(causa_id, texto: str) -> None:
-    """Escribe el paso actual de la sincronizacion en `causas.sync_detalle`, en una
+def _modelo_causa(es_familia: bool):
+    return CausaFamilia if es_familia else Causa
+
+
+async def _reportar_progreso(causa_id, es_familia: bool, texto: str) -> None:
+    """Escribe el paso actual de la sincronizacion en `<causas>.sync_detalle`, en una
     sesion corta e independiente de la transaccion del job (solo toca esa columna).
-    Se expone en `consultar_civil` como `detalle_estado`."""
+    Se expone en `consultar_civil` / `consultar_familia` como `detalle_estado`."""
+    modelo = _modelo_causa(es_familia)
     try:
         async with AsyncSessionLocal() as session:
-            await session.execute(update(Causa).where(Causa.id == causa_id).values(sync_detalle=texto))
+            await session.execute(update(modelo).where(modelo.id == causa_id).values(sync_detalle=texto))
             await session.commit()
     except Exception:
         logger.exception("No se pudo registrar el progreso '%s'", texto)
@@ -60,7 +68,10 @@ async def _barrer_jobs_huerfanos() -> None:
             job.error_mensaje = "Job huerfano: worker reiniciado a medio proceso"
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)
-            causa = await session.get(Causa, job.causa_id)
+            if job.causa_familia_id is not None:
+                causa = await session.get(CausaFamilia, job.causa_familia_id)
+            else:
+                causa = await session.get(Causa, job.causa_id)
             if causa is not None and causa.estado_sync == "Sincronizando":
                 causa.estado_sync = "Error"
                 causa.sync_detalle = None
@@ -100,14 +111,29 @@ def _limpiar_credenciales(job: SyncJob) -> None:
 async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
     async with AsyncSessionLocal() as session:
         job = await session.get(SyncJob, job_id)
-        causa = await session.get(Causa, job.causa_id)
+        es_familia = job.causa_familia_id is not None
+        modelo = _modelo_causa(es_familia)
+        causa_id = job.causa_familia_id if es_familia else job.causa_id
+        causa = await session.get(modelo, causa_id)
+        etiqueta = causa.rit if es_familia else causa.rol_formateado
 
         privada = job.rut_cifrado is not None
         sesion_privada: PjudSessionPrivada | None = None
-        progreso = functools.partial(_reportar_progreso, causa.id)
+        progreso = functools.partial(_reportar_progreso, causa_id, es_familia)
 
         try:
-            if privada:
+            if es_familia:
+                # Familia es siempre privada (el endpoint exige credenciales).
+                rut = descifrar(job.rut_cifrado)
+                clave = descifrar(job.clave_cifrada)
+                sesion_privada = PjudSessionFamiliaPrivada(
+                    rut, clave, job.metodo_login or PjudSessionFamiliaPrivada.METODO_CLAVE_PJUD,
+                    headless=settings.playwright_headless,
+                )
+                await progreso("Iniciando sesion en la Oficina Judicial Virtual")
+                await sesion_privada.iniciar()
+                await sincronizar_causa_familia(session, sesion_privada, causa, progreso=progreso)
+            elif privada:
                 rut = descifrar(job.rut_cifrado)
                 clave = descifrar(job.clave_cifrada)
                 sesion_privada = PjudSessionPrivada(
@@ -125,22 +151,22 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             causa.ultimo_error = None
             # UPDATE explicito: `_reportar_progreso` escribio sync_detalle desde otra
             # sesion, asi que el ORM de esta no detecta el cambio a None.
-            await session.execute(update(Causa).where(Causa.id == causa.id).values(sync_detalle=None))
+            await session.execute(update(modelo).where(modelo.id == causa_id).values(sync_detalle=None))
             job.estado = "completo"
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)
             await session.commit()
-            logger.info("Job %s (%s) completado", job.id, causa.rol_formateado)
+            logger.info("Job %s (%s) completado", job.id, etiqueta)
         except (CausaNoEncontrada, LoginPrivadoError) as exc:
             await session.rollback()
             job = await session.get(SyncJob, job_id)
-            causa = await session.get(Causa, job.causa_id)
+            causa = await session.get(modelo, causa_id)
             causa.estado_sync = "Error"
             causa.ultimo_error = str(exc)
             # UPDATE explicito: `_reportar_progreso` pudo escribir sync_detalle desde otra
             # sesion durante el intento; una asignacion ORM normal no lo detectaria si el
             # valor en memoria de `causa` ya era None (ver comentario en el camino exitoso).
-            await session.execute(update(Causa).where(Causa.id == causa.id).values(sync_detalle=None))
+            await session.execute(update(modelo).where(modelo.id == causa_id).values(sync_detalle=None))
             job.estado = "error"
             job.error_mensaje = str(exc)
             job.finalizado_en = datetime.now(timezone.utc)
@@ -154,14 +180,14 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             # el worker entero. Usar el int que ya tenemos.
             logger.exception("Job %s fallo", job_id)
             job = await session.get(SyncJob, job_id)
-            causa = await session.get(Causa, job.causa_id)
+            causa = await session.get(modelo, causa_id)
             if job.intentos < MAX_INTENTOS:
                 job.estado = "pendiente"
                 job.error_mensaje = str(exc)
             else:
                 causa.estado_sync = "Error"
                 causa.ultimo_error = str(exc)
-                await session.execute(update(Causa).where(Causa.id == causa.id).values(sync_detalle=None))
+                await session.execute(update(modelo).where(modelo.id == causa_id).values(sync_detalle=None))
                 job.estado = "error"
                 job.error_mensaje = str(exc)
                 job.finalizado_en = datetime.now(timezone.utc)
