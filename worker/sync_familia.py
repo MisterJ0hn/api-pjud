@@ -371,8 +371,14 @@ async def _sincronizar_historia(
 
 async def _reemplazar_litigantes(session: AsyncSession, causa: CausaFamilia, tabla: dict) -> None:
     await session.execute(delete(LitiganteFamilia).where(LitiganteFamilia.causa_familia_id == causa.id))
+    vistos: set[str] = set()
     for fila in tabla.get("filas", []):
         v = fila["valores"]
+        h = hash_fila(v)
+        if h in vistos:
+            # PJUD repite el mismo litigante en la tabla (ver civil / E-3104-2026).
+            continue
+        vistos.add(h)
         session.add(
             LitiganteFamilia(
                 causa_familia_id=causa.id,

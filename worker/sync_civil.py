@@ -444,13 +444,25 @@ async def _sincronizar_historia(
 
 async def _reemplazar_litigantes(session: AsyncSession, cuaderno: Cuaderno, tabla: dict) -> None:
     await session.execute(delete(Litigante).where(Litigante.cuaderno_id == cuaderno.id))
+    vistos: set[tuple[str | None, str | None]] = set()
     for fila in tabla.get("filas", []):
         v = fila["valores"]
+        participante = v.get("Participante")
+        rut = v.get("Rut")
+        # PJUD a veces repite el mismo litigante (mismo participante + rut) en la tabla
+        # -- p. ej. un abogado que patrocina a varios terceros figura una vez por cada
+        # uno. Insertar la fila repetida viola uq_litigantes_cuaderno_part_rut y tumba
+        # toda la sync (visto en E-3104-2026: "AB.TER 16952077-1" repetido). Solo es
+        # colision real cuando rut tiene valor (Postgres trata NULL como distinto).
+        clave = (participante, rut)
+        if rut and clave in vistos:
+            continue
+        vistos.add(clave)
         session.add(
             Litigante(
                 cuaderno_id=cuaderno.id,
-                participante=v.get("Participante"),
-                rut=v.get("Rut"),
+                participante=participante,
+                rut=rut,
                 persona=v.get("Persona"),
                 razon_social=v.get("Nombre o Razón Social"),
             )

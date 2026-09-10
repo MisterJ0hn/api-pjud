@@ -982,10 +982,19 @@ class PjudSessionPrivada(_PjudModalScraper):
                 logger.warning("No se pudo seleccionar el tipo '%s' en #%s", tipo, self.CAMPO_TIPO)
             await page.fill(f"#{self.CAMPO_ROL}", str(rol))
             await page.fill(f"#{self.CAMPO_ANIO}", str(anio))
-            # El filtro de Estado viene por defecto en "Tramitacion"; se limpia para no
-            # excluir causas en otros estados (archivadas, concluidas, etc.).
+            # El filtro de Estado (multiple) viene por defecto solo en "Tramitacion".
+            # Limpiarlo no basta: hay estados que igual quedan fuera del resultado
+            # (p. ej. "Tramitacion pend." en Familia). Se seleccionan TODAS las
+            # opciones para no excluir ninguna causa.
             try:
-                await page.select_option(f"#{self.CAMPO_ESTADO}", [])
+                valores_estado = await page.eval_on_selector_all(
+                    f"#{self.CAMPO_ESTADO} option",
+                    "els => els.map(o => o.value)",
+                )
+                if valores_estado:
+                    await page.select_option(f"#{self.CAMPO_ESTADO}", valores_estado)
+                else:
+                    await page.select_option(f"#{self.CAMPO_ESTADO}", [])
             except Exception:
                 pass
 
