@@ -87,7 +87,11 @@ async def _obtener_o_descargar_doc(
     referencia: str | None = None,
     hash_padre: str | None = None,
     post: dict | None = None,
+    forzar: bool = False,
 ) -> DocumentoFamilia | None:
+    """`forzar=True` (usado para el ebook, que PJUD regenera completo cada vez que se
+    agrega un documento nuevo a la causa) se salta la idempotencia por clave_logica y
+    siempre vuelve a pedirlo a PJUD, sobreescribiendo el archivo en disco."""
     existente = (
         await session.execute(
             select(DocumentoFamilia).where(
@@ -97,9 +101,10 @@ async def _obtener_o_descargar_doc(
         )
     ).scalar_one_or_none()
     if existente is not None:
-        if _archivo_en_disco(existente.ruta_archivo):
+        if not forzar and _archivo_en_disco(existente.ruta_archivo):
             return existente
-        logger.warning("Documento '%s' registrado sin archivo en disco; se re-descarga", clave_logica)
+        if not forzar:
+            logger.warning("Documento '%s' registrado sin archivo en disco; se re-descarga", clave_logica)
         ruta = await _descargar_a_disco(sesion_pjud, url, causa_id, clave_logica, post)
         if ruta is None:
             return existente
@@ -654,7 +659,9 @@ async def sincronizar_causa_familia(
             ).scalar_one_or_none()
             if existente is not None and _archivo_en_disco(existente.ruta_archivo):
                 continue
-        await _obtener_o_descargar_doc(session, sesion_pjud, causa.id, categoria, categoria, d["url"])
+        await _obtener_o_descargar_doc(
+            session, sesion_pjud, causa.id, categoria, categoria, d["url"], forzar=(categoria == "ebook"),
+        )
         await session.commit()
 
     logger.info("Sincronizacion de %s completada (hubo_cambios=%s)", causa.rit, hubo_cambios)

@@ -124,21 +124,27 @@ async def _obtener_o_descargar_documento(
     url: str,
     referencia: str | None = None,
     hash_padre: str | None = None,
+    forzar: bool = False,
 ) -> Documento | None:
     """Idempotencia real: si ya existe un Documento con esta clave_logica NO se vuelve a
     llamar a PJUD... salvo que su archivo ya no este en disco (descarga que fallo en un
     sync anterior, archivo borrado, volumen perdido): en ese caso se re-descarga y se
-    actualiza la ruta, conservando la misma fila."""
+    actualiza la ruta, conservando la misma fila.
+
+    `forzar=True` (usado para el ebook, que PJUD regenera completo cada vez que se
+    agrega un documento nuevo a la causa) se salta esa idempotencia y siempre vuelve a
+    pedirlo a PJUD, sobreescribiendo el archivo en disco."""
     existente = (
         await session.execute(select(Documento).where(Documento.causa_id == causa_id, Documento.clave_logica == clave_logica))
     ).scalar_one_or_none()
     if existente is not None:
-        if _archivo_en_disco(existente.ruta_archivo):
+        if not forzar and _archivo_en_disco(existente.ruta_archivo):
             return existente
-        logger.warning(
-            "Documento '%s' registrado pero sin archivo en disco (%s); se re-descarga",
-            clave_logica, existente.ruta_archivo,
-        )
+        if not forzar:
+            logger.warning(
+                "Documento '%s' registrado pero sin archivo en disco (%s); se re-descarga",
+                clave_logica, existente.ruta_archivo,
+            )
         ruta = await _descargar_a_disco(sesion_pjud, url, causa_id, clave_logica, cuaderno_numero)
         if ruta is None:
             logger.warning("Re-descarga de '%s' fallo; queda pendiente para el proximo sync", clave_logica)
@@ -773,7 +779,10 @@ async def sincronizar_causa(
             ).scalar_one_or_none()
             if existente is not None and _archivo_en_disco(existente.ruta_archivo):
                 continue
-        await _obtener_o_descargar_documento(session, sesion_pjud, causa.id, None, categoria, categoria, None, d["url"])
+        await _obtener_o_descargar_documento(
+            session, sesion_pjud, causa.id, None, categoria, categoria, None, d["url"],
+            forzar=(categoria == "ebook"),
+        )
         await session.commit()
 
     logger.info("Sincronizacion de %s completada (hubo_cambios=%s)", rol_fmt, hubo_cambios)
