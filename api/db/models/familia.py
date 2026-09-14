@@ -98,7 +98,7 @@ class DocumentoFamilia(Base):
 
 
 class AnexoCausaFamilia(Base):
-    """Filas del sub-modal "Anexos de la causa" de la cabecera (Doc./Fecha/Referencia)."""
+    """Filas del sub-modal "Anexos de la causa" de la cabecera (Folio/Doc./Fecha/Referencia)."""
 
     __tablename__ = "anexos_causa_familia"
 
@@ -107,6 +107,7 @@ class AnexoCausaFamilia(Base):
         UUID(as_uuid=True), ForeignKey("causas_familia.id", ondelete="CASCADE"), nullable=False, index=True
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_familia.id"), nullable=True)
+    folio: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
     referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
 

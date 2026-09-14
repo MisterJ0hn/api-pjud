@@ -80,11 +80,13 @@ Response 200:
         "tribunal":"1° Juzgado Civil de Valparaíso", #Tribunal        
         "anexos_causa": [
             {
+                "folio":"1",
                 "fecha":"30/01/2026",
                 "referencia": "PAGARE",
                 "nombre_doc": "Anexos_causa", #nombre idenpotente
                 "doc":"https://api-pjud.temposoft.cl/public/ANEXO_CAUSA_.pdf"
             },{
+                "folio":"2",
                 "fecha":"30/01/2026",
                 "referencia": "CONTRATO",
                 "nombre_doc": "Anexos_causa", #nombre idenpotente

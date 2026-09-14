@@ -597,7 +597,7 @@ async def sincronizar_causa_familia(
         await _rep("Guardando anexos de la causa")
         for sub in anexos_sub.get("filas", []):
             v = sub["valores"]
-            referencia, fecha = _campo(v, "Referencia"), _campo(v, "Fecha")
+            folio, referencia, fecha = _campo(v, "Folio"), _campo(v, "Referencia"), _campo(v, "Fecha")
             existente = (
                 await session.execute(
                     select(AnexoCausaFamilia).where(
@@ -609,6 +609,8 @@ async def sincronizar_causa_familia(
             ).scalar_one_or_none()
             urls = sub.get("enlaces", {}).get("Doc.") or []
             if existente is not None:
+                if folio and existente.folio != folio:
+                    existente.folio = folio
                 if urls and not await _documento_en_disco(session, existente.documento_id):
                     doc = await _obtener_o_descargar_doc(
                         session, sesion_pjud, causa.id, "anexo_causa", f"anexo_{slug(referencia)}",
@@ -616,7 +618,7 @@ async def sincronizar_causa_familia(
                     )
                     if doc is not None and existente.documento_id != doc.id:
                         existente.documento_id = doc.id
-                    await session.commit()
+                await session.commit()
                 continue
             hubo_cambios = True
             documento_id = None
@@ -628,7 +630,8 @@ async def sincronizar_causa_familia(
                 documento_id = doc.id if doc else None
             session.add(
                 AnexoCausaFamilia(
-                    causa_familia_id=causa.id, documento_id=documento_id, fecha=fecha, referencia=referencia
+                    causa_familia_id=causa.id, documento_id=documento_id, folio=folio, fecha=fecha,
+                    referencia=referencia,
                 )
             )
             await session.commit()

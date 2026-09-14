@@ -144,10 +144,15 @@ async def construir_causa_detalle(session: AsyncSession, causa: CausaFamilia) ->
         docs_por_id[d.id] = d
 
     anexos_rows = (
-        await session.execute(select(AnexoCausaFamilia).where(AnexoCausaFamilia.causa_familia_id == causa.id))
+        await session.execute(
+            select(AnexoCausaFamilia)
+            .where(AnexoCausaFamilia.causa_familia_id == causa.id)
+            .order_by(AnexoCausaFamilia.id)
+        )
     ).scalars().all()
     anexos = [
         AnexoCausaItem(
+            folio=a.folio,
             fecha=a.fecha,
             referencia=a.referencia,
             nombre_doc=docs_por_id[a.documento_id].nombre_archivo if a.documento_id in docs_por_id else None,

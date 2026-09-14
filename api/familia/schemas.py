@@ -28,6 +28,9 @@ class DocumentoRef(BaseModel):
 
 
 class AnexoCausaItem(BaseModel):
+    # Indice secuencial (1, 2, ...) asignado al exponer la respuesta: el sub-modal
+    # "Anexos de la causa" de PJUD no trae una columna Folio propia.
+    folio: str | None = None
     fecha: str | None = None
     referencia: str | None = None
     nombre_doc: str | None = None
