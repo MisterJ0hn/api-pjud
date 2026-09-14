@@ -642,23 +642,15 @@ async def sincronizar_causa_familia(
             await session.commit()
 
     # --- Cabecera: certificado_envio / ebook --------------------------------
+    # certificado_envio es inmutable una vez obtenido; ebook se vuelve a descargar
+    # SIEMPRE (PJUD lo regenera completo cada vez que se agrega un documento nuevo a
+    # la causa, y no hay forma de saber desde afuera si cambio sin bajarlo).
     if cabecera.get("descargas"):
         await _rep("Descargando documentos de la causa")
     for d in cabecera.get("descargas", []):
         categoria = CATEGORIAS_CABECERA.get(_normalizar(d["label"]))
         if categoria is None:
             continue
-        if categoria == "ebook" and not hubo_cambios:
-            existente = (
-                await session.execute(
-                    select(DocumentoFamilia).where(
-                        DocumentoFamilia.causa_familia_id == causa.id,
-                        DocumentoFamilia.clave_logica == "ebook",
-                    )
-                )
-            ).scalar_one_or_none()
-            if existente is not None and _archivo_en_disco(existente.ruta_archivo):
-                continue
         await _obtener_o_descargar_doc(
             session, sesion_pjud, causa.id, categoria, categoria, d["url"], forzar=(categoria == "ebook"),
         )
