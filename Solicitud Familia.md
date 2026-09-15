@@ -151,7 +151,25 @@ Response 200:
             "estado":"Firmado",
             "tramite":"Actuación Receptor",
             "descripcion_tramite": "NOTIFICACIÓN DE DEMANDA (Exitosa) Diligencia:07/04/2026 17:10",
-            "fecha_tramite": "10/04/2026 (07/04/2026)"
+            "fecha_tramite": "10/04/2026 (07/04/2026)",
+            # Inicio Actualizacion 14-09-2026
+            "georeferencia": { #en pjud es un link que abre un popup id=modalGeoReferenciaFamilia.
+                "mapa" : { #se encuentra en la pestaña Mapas href="#mapasGeoRef"
+                    "latitud":"3", #id="latitud"
+                    "longitud":"33",#id="longitud"
+                    "corrector":"10" #id="corrector"
+                },
+                "imagenes":[ #se encuentra en la pestaña Imagenes href="#imagenesGeoRef"
+                    {
+                        "img":"https://api-pjud.temposoft.cl/public/GUID.[jpg|png|gif]" # en base de datos, para que no graba el nombre del archivo que esta en alt de img del popup, para que despues lo compares. La url quiero que sea un guid en vez del nombre.
+                    },
+                    {
+                        "img":"https://api-pjud.temposoft.cl/public/GUID.[jpg|png|gif]"
+                    } 
+                ],
+                "videos":[] # por el momento estará vacío. no encuentro ejemplos de que es lo que llega.
+            }
+            # Fin Actualizacion 14-09-2026
         },
         {
             "folio": 2,

@@ -84,6 +84,24 @@ class HistoriaAnexoItem(BaseModel):
     observacion: str | None = None
 
 
+class GeoReferenciaMapa(BaseModel):
+    latitud: str | None = None
+    longitud: str | None = None
+    corrector: str | None = None
+
+
+class GeoReferenciaImagenItem(BaseModel):
+    img: str | None = None
+
+
+class GeoReferenciaItem(BaseModel):
+    mapa: GeoReferenciaMapa | None = None
+    imagenes: list[GeoReferenciaImagenItem] = Field(default_factory=list)
+    # PJUD no trae ejemplos de video en el popup todavia; queda vacio hasta conocer su
+    # estructura.
+    videos: list = Field(default_factory=list)
+
+
 class MovimientoFamiliaItem(BaseModel):
     folio: int | None = None
     folio_texto: str | None = None
@@ -94,6 +112,7 @@ class MovimientoFamiliaItem(BaseModel):
     tramite: str | None = None
     descripcion_tramite: str | None = None
     fecha_tramite: str | None = None
+    georeferencia: GeoReferenciaItem | None = None
 
 
 class LitiganteFamiliaItem(BaseModel):

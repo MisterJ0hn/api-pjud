@@ -250,6 +250,9 @@ class _PjudModalScraper:
     # Prefijos del nombre de la pestana que se trata como "Historia" (dispara la
     # extraccion de anexos por popup). Familia la llama "Movimientos".
     PREFIJOS_HISTORIA = ("historia",)
+    # Id del popup de la columna "Georeferencia" de Historia/Movimientos (None = la
+    # competencia no lo tiene). Solo Familia lo define por ahora.
+    MODAL_GEOREFERENCIA: str | None = None
 
     async def _reportar(self, texto: str) -> None:
         if self._progreso is None:
@@ -455,6 +458,8 @@ class _PjudModalScraper:
             seccion = tablas[0] if tablas else {"headers": [], "filas": []}
             if _es_seccion_historia(tab["nombre"], self.PREFIJOS_HISTORIA):
                 await self._extraer_anexos_popup_historia(pane_id, seccion)
+                if self.MODAL_GEOREFERENCIA:
+                    await self._extraer_georeferencia_popup_historia(pane_id, seccion)
             secciones[tab["nombre"]] = seccion
         return secciones
 
@@ -528,6 +533,90 @@ class _PjudModalScraper:
             fila.setdefault("valores", {})[col_anexo] = " | ".join(
                 "~".join(str(x) for x in a.get("valores", {}).values()) for a in anexos
             )
+            await page.evaluate(
+                """(popupId) => {
+                    const m = document.getElementById(popupId);
+                    if (!m) return;
+                    const c = m.querySelector('.close, button.close, [data-dismiss="modal"]');
+                    if (c) c.click();
+                }""",
+                popup_id,
+            )
+            await page.wait_for_timeout(300)
+
+    async def _extraer_georeferencia_popup_historia(self, pane_id: str, seccion: dict) -> None:
+        """La columna "Georeferencia" de Historia/Movimientos (solo Familia por ahora,
+        `self.MODAL_GEOREFERENCIA`) abre un popup con 3 pestanas: Mapas (`#mapasGeoRef`,
+        inputs `#latitud`/`#longitud`/`#corrector`), Imagenes (`#imagenesGeoRef`, `<img
+        src alt>`) y Videos (estructura desconocida, no se scrapea). Las 3 pestanas se
+        renderizan de una sola vez en el mismo AJAX que abre el popup (a diferencia de
+        las pestanas de cuaderno, que cargan cada una por su cuenta), asi que no hace
+        falta clickearlas: se leen directo del DOM aunque no esten "activas".
+
+        Por cada fila con el link vuelca `fila["georeferencia_popup"] = {"mapa":
+        {...}|None, "imagenes": [{"src":.., "alt":..}], "videos": []}` y resume el
+        contenido en la celda "Georeferencia" para que el hash de la fila (worker)
+        detecte cambios."""
+        page = self._page
+        popup_id = self.MODAL_GEOREFERENCIA
+        popup_href = f"#{popup_id}"
+        filas = seccion.get("filas", [])
+        for idx, fila in enumerate(filas):
+            popups = fila.get("popups") or {}
+            match = next(
+                (col for col, lst in popups.items() if popup_href in lst),
+                None,
+            )
+            if match is None:
+                continue
+            col_georef = match
+            clicked = await page.evaluate(
+                """([paneId, idx, popupHref]) => {
+                    const cont = document.getElementById(paneId);
+                    const t = cont && cont.querySelector('table');
+                    if (!t) return false;
+                    const rows = t.querySelectorAll('tbody tr').length
+                        ? t.querySelectorAll('tbody tr') : t.querySelectorAll('tr');
+                    const conCeldas = Array.from(rows).filter(tr => tr.querySelectorAll('td').length);
+                    const tr = conCeldas[idx];
+                    if (!tr) return false;
+                    const a = tr.querySelector('a[data-toggle="modal"][href="' + popupHref + '"]');
+                    if (!a) return false;
+                    a.click();
+                    return true;
+                }""",
+                [pane_id, idx, popup_href],
+            )
+            if not clicked:
+                continue
+            await page.wait_for_timeout(1600)  # el contenido del popup carga por AJAX
+            datos = await page.evaluate(
+                """(popupId) => {
+                    const raiz = document.getElementById(popupId);
+                    if (!raiz) return null;
+                    const leer = (id) => {
+                        const el = raiz.querySelector('#' + id);
+                        if (!el) return null;
+                        const v = ('value' in el) ? el.value : el.textContent;
+                        const t = (v || '').trim();
+                        return t || null;
+                    };
+                    const lat = leer('latitud'), lon = leer('longitud'), cor = leer('corrector');
+                    const mapa = (lat || lon || cor) ? {latitud: lat, longitud: lon, corrector: cor} : null;
+                    const imgs = Array.from(raiz.querySelectorAll('#imagenesGeoRef img')).map(img => ({
+                        src: img.getAttribute('src') ? new URL(img.getAttribute('src'), location.href).toString() : null,
+                        alt: (img.getAttribute('alt') || '').trim() || null,
+                    })).filter(i => i.src);
+                    return {mapa, imagenes: imgs};
+                }""",
+                popup_id,
+            )
+            datos = datos or {"mapa": None, "imagenes": []}
+            datos["videos"] = []
+            fila["georeferencia_popup"] = datos
+            resumen_mapa = "~".join(str(v) for v in (datos["mapa"] or {}).values())
+            resumen_imgs = " | ".join(f"{i.get('alt')}:{i.get('src')}" for i in datos["imagenes"])
+            fila.setdefault("valores", {})[col_georef] = f"{resumen_mapa}#{resumen_imgs}"
             await page.evaluate(
                 """(popupId) => {
                     const m = document.getElementById(popupId);
@@ -1077,3 +1166,6 @@ class PjudSessionFamiliaPrivada(PjudSessionPrivada):
     # docFamiliaSii.php). Validado en vivo con C-2973-2025.
     MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoFamilia", "modalSIIFamilia")
     PREFIJOS_HISTORIA = ("historia", "movimiento")
+    # Popup de la columna "Georeferencia" de Movimientos: pestanas Mapas/Imagenes/Videos
+    # (Videos aun sin ejemplos, no se scrapea). No verificado en vivo en este repo.
+    MODAL_GEOREFERENCIA = "modalGeoReferenciaFamilia"

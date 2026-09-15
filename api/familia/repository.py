@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select, text, update
@@ -9,6 +10,9 @@ from api.familia.schemas import (
     CausaFamiliaDetalle,
     DiligenciaItem,
     DocumentoRef,
+    GeoReferenciaImagenItem,
+    GeoReferenciaItem,
+    GeoReferenciaMapa,
     HistoriaAnexoItem,
     HistoriaDocItem,
     LitiganteFamiliaItem,
@@ -18,7 +22,7 @@ from api.familia.schemas import (
     NotificacionFamiliaItem,
     PlazoItem,
 )
-from api.familia.urls import rit_formateado, url_publica_documento_familia
+from api.familia.urls import rit_formateado, url_publica_documento_familia, url_publica_imagen_familia
 from api.db.models.familia import (
     AnexoCausaFamilia,
     CausaFamilia,
@@ -29,6 +33,7 @@ from api.db.models.familia import (
     MovimientoHistoriaFamilia,
     MovimientoHistoriaFamiliaAnexo,
     MovimientoHistoriaFamiliaDoc,
+    MovimientoHistoriaFamiliaGeoImagen,
     NotificacionFamilia,
     PlazoFamilia,
 )
@@ -206,6 +211,13 @@ async def construir_movimientos(session: AsyncSession, causa: CausaFamilia) -> M
         doc = docs_por_id.get(documento_id)
         return url_publica_documento_familia(causa.id, doc.nombre_archivo) if doc else None
 
+    def imagen_url(documento_id) -> str | None:
+        doc = docs_por_id.get(documento_id)
+        if doc is None:
+            return None
+        _, ext = os.path.splitext(doc.ruta_archivo)
+        return url_publica_imagen_familia(causa.id, doc.id, ext)
+
     historia_rows = (
         await session.execute(
             select(MovimientoHistoriaFamilia)
@@ -229,6 +241,26 @@ async def construir_movimientos(session: AsyncSession, causa: CausaFamilia) -> M
                 .order_by(MovimientoHistoriaFamiliaAnexo.orden)
             )
         ).scalars().all()
+        geo_img_rows = (
+            await session.execute(
+                select(MovimientoHistoriaFamiliaGeoImagen)
+                .where(MovimientoHistoriaFamiliaGeoImagen.movimiento_id == h.id)
+                .order_by(MovimientoHistoriaFamiliaGeoImagen.orden)
+            )
+        ).scalars().all()
+        tiene_mapa = h.geo_latitud is not None or h.geo_longitud is not None or h.geo_corrector is not None
+        georeferencia = (
+            GeoReferenciaItem(
+                mapa=(
+                    GeoReferenciaMapa(latitud=h.geo_latitud, longitud=h.geo_longitud, corrector=h.geo_corrector)
+                    if tiene_mapa
+                    else None
+                ),
+                imagenes=[GeoReferenciaImagenItem(img=imagen_url(i.documento_id)) for i in geo_img_rows],
+            )
+            if tiene_mapa or geo_img_rows
+            else None
+        )
         movimientos.append(
             MovimientoFamiliaItem(
                 folio=h.folio,
@@ -249,6 +281,7 @@ async def construir_movimientos(session: AsyncSession, causa: CausaFamilia) -> M
                 tramite=h.tramite,
                 descripcion_tramite=h.descripcion_tramite,
                 fecha_tramite=h.fecha_tramite,
+                georeferencia=georeferencia,
             )
         )
 

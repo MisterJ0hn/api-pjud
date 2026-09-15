@@ -29,6 +29,7 @@ from api.db.models.familia import (
     MovimientoHistoriaFamilia,
     MovimientoHistoriaFamiliaAnexo,
     MovimientoHistoriaFamiliaDoc,
+    MovimientoHistoriaFamiliaGeoImagen,
     NotificacionFamilia,
     PlazoFamilia,
 )
@@ -255,6 +256,43 @@ async def _persistir_docs_anexos_historia(
             )
 
 
+async def _persistir_georeferencia_historia(
+    session: AsyncSession,
+    sesion_pjud,
+    causa: CausaFamilia,
+    mov: MovimientoHistoriaFamilia,
+    fila: dict,
+    clave_base: str,
+    h: str,
+) -> None:
+    """Vuelca `fila["georeferencia_popup"]` (mapa + imagenes, ver
+    `_extraer_georeferencia_popup_historia`) sobre el movimiento. Si la fila no trajo
+    popup de Georeferencia (causa sin datos, o competencia sin `MODAL_GEOREFERENCIA`)
+    no toca nada."""
+    datos = fila.get("georeferencia_popup")
+    if datos is None:
+        return
+    mapa = datos.get("mapa") or {}
+    mov.geo_latitud = mapa.get("latitud")
+    mov.geo_longitud = mapa.get("longitud")
+    mov.geo_corrector = mapa.get("corrector")
+
+    imagenes = datos.get("imagenes") or []
+    await session.execute(
+        delete(MovimientoHistoriaFamiliaGeoImagen).where(MovimientoHistoriaFamiliaGeoImagen.movimiento_id == mov.id)
+    )
+    for i, img in enumerate(imagenes, start=1):
+        doc = await _obtener_o_descargar_doc(
+            session, sesion_pjud, causa.id, "historia_georef_imagen", f"{clave_base}_geo_img{i}",
+            url=img.get("src"), referencia=img.get("alt"), hash_padre=h,
+        )
+        session.add(
+            MovimientoHistoriaFamiliaGeoImagen(
+                movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i
+            )
+        )
+
+
 async def _sincronizar_historia(
     session: AsyncSession, sesion_pjud, causa: CausaFamilia, tabla: dict
 ) -> bool:
@@ -318,6 +356,7 @@ async def _sincronizar_historia(
             session.add(mov)
             await session.flush()
             await _persistir_docs_anexos_historia(session, sesion_pjud, causa, mov, fila, enlaces, clave_base, h)
+            await _persistir_georeferencia_historia(session, sesion_pjud, causa, mov, fila, clave_base, h)
             await session.commit()
             continue
 
@@ -364,6 +403,7 @@ async def _sincronizar_historia(
         existente.hash_contenido = h
         await session.flush()
         await _persistir_docs_anexos_historia(session, sesion_pjud, causa, existente, fila, enlaces, clave_docs, h)
+        await _persistir_georeferencia_historia(session, sesion_pjud, causa, existente, fila, clave_docs, h)
         await session.commit()
 
     if sorted(nuevas_sin_clave) != previas:

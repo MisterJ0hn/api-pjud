@@ -88,6 +88,12 @@ Response 200:
         "estado_proceso": "Tramitación", #Estado Proc.
         "etapa":"1 Notificación demanda y su proveído", #Etapa
         "tribunal":"1° Juzgado Civil de Valparaíso", #Tribunal
+        # Inicio Actualización 15-09-2026. Existen algunas causas, tienen Causa Origen:, como prueba E-1798-2026.
+        "causa_origen": {
+            "rol":"C-1964-2026",
+            "tribunal": "4 ° Juzgado de Letras Civil de Antofagasta"
+        },
+        # Fin Actualización
         "texto_demanda":{
             "nombre_archivo": "texto_demanda_", # debe ser un nombre IDEMPOTENTE
             "url": "https://api-pjud.temposoft.cl/public/texto_demanda_.pdf"
@@ -309,7 +315,35 @@ Response 200:
             "fecha_ingreso_exhorto": "22/07/2025",
             "tribunal_destino":"1º Juzgado Civil de Temuco",
             "estado_exhorto":"Recepcionado"
+        },
+    # Inicio Actualización 15-09-2026. Existen algunas causas, tienen Causa Origen:, como prueba E-1798-2026.
+    # Ojo que los folios y foja y fecha_tramite y cuaderno se pueden repetir.. ve como puedes generar la idempotencia. Fijate tambien en el orden, debemos mantener el mismo orden que pjud.
+    "piezas_exhorto":[
+        {
+            "folio": "33", #Contempla que pueda venir vacio, con letras.
+            "doc": "https://api-pjud.temposoft.cl/public/pieza_exhroto_1_.pdf", # contempla que pueda venir vacio.
+            "cuaderno":"1",
+            "anexo":[], # aun no tengo un ejemplo claro
+            "etapa":"Tramitación Liquidación", # Contempla que se encuentre vacio.
+            "tramite":"Resolución",
+            "descripcion_tramite": "Ofíciese",
+            "fecha_tramite": "08/09/2026",
+            "foja":"31"
+
+        },
+        {
+            "folio": "33", #Contempla que pueda venir vacio, con letras.
+            "doc": "", # contempla que pueda venir vacio.
+            "cuaderno":"1",
+            "anexo":[], # aun no tengo un ejemplo claro
+            "etapa":"", # Contempla que se encuentre vacio.
+            "tramite":"",
+            "descripcion_tramite": "Por publicada Res. de Liquidación",
+            "fecha_tramite": "08/09/2026",
+            "foja":"31"
+
         }
+    ]
     ]
 
 }

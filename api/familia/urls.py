@@ -11,3 +11,10 @@ def url_publica_documento_familia(causa_familia_id, nombre_archivo: str) -> str:
     # tabla. Familia es cuaderno unico, asi que no hay segmento de cuaderno.
     base = settings.public_base_url.rstrip("/")
     return f"{base}/public/familia/{causa_familia_id}/{nombre_archivo}.pdf"
+
+
+def url_publica_imagen_familia(causa_familia_id, documento_id, extension: str) -> str:
+    # Imagenes del popup Georeferencia: sin nombre natural estable, se sirven por GUID
+    # (el id del Documento) en vez de por `nombre_archivo` como el resto de los docs.
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/public/familia/{causa_familia_id}/img/{documento_id}{extension}"

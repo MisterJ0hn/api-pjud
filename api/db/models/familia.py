@@ -136,12 +136,19 @@ class MovimientoHistoriaFamilia(Base):
     fecha_tramite: Mapped[str | None] = mapped_column(String(60), nullable=True)
     hash_contenido: Mapped[str] = mapped_column(String(64), nullable=False)
     ocurrencia: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Popup "Georeferencia" (pestana Mapas): un solo punto por movimiento.
+    geo_latitud: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    geo_longitud: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    geo_corrector: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     docs: Mapped[list["MovimientoHistoriaFamiliaDoc"]] = relationship(
         back_populates="movimiento", cascade="all, delete-orphan", order_by="MovimientoHistoriaFamiliaDoc.orden"
     )
     anexos: Mapped[list["MovimientoHistoriaFamiliaAnexo"]] = relationship(
         back_populates="movimiento", cascade="all, delete-orphan", order_by="MovimientoHistoriaFamiliaAnexo.orden"
+    )
+    geo_imagenes: Mapped[list["MovimientoHistoriaFamiliaGeoImagen"]] = relationship(
+        back_populates="movimiento", cascade="all, delete-orphan", order_by="MovimientoHistoriaFamiliaGeoImagen.orden"
     )
 
     __table_args__ = (
@@ -193,6 +200,28 @@ class MovimientoHistoriaFamiliaAnexo(Base):
 
     __table_args__ = (
         UniqueConstraint("movimiento_id", "orden", name="uq_historia_familia_anexo_mov_orden"),
+    )
+
+
+class MovimientoHistoriaFamiliaGeoImagen(Base):
+    """Imagenes de la pestana "Imagenes" del popup Georeferencia. `documento_id.id`
+    (UUID) se reusa como nombre de archivo publico (ver `url_publica_imagen_familia`):
+    a diferencia de los demas documentos de Familia, estas imagenes no tienen un nombre
+    natural estable, asi que se sirven por GUID en vez de por `nombre_archivo`."""
+
+    __tablename__ = "movimientos_historia_familia_geo_imagenes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    movimiento_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("movimientos_historia_familia.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_familia.id"), nullable=True)
+    orden: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    movimiento: Mapped["MovimientoHistoriaFamilia"] = relationship(back_populates="geo_imagenes")
+
+    __table_args__ = (
+        UniqueConstraint("movimiento_id", "orden", name="uq_historia_familia_geo_img_mov_orden"),
     )
 
 

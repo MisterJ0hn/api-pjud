@@ -1,3 +1,4 @@
+import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,13 @@ from api.db.models.familia import CausaFamilia, DocumentoFamilia
 from api.db.session_async import get_session
 
 router = APIRouter(prefix="/public", tags=["documentos"])
+
+_MIME_POR_EXTENSION = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+}
 
 
 async def _resolver_y_servir(
@@ -75,6 +83,39 @@ async def _resolver_y_servir_familia(session: AsyncSession, causa_id: str, nombr
         raise HTTPException(status_code=404, detail="No encontrado")
 
     return FileResponse(documento.ruta_archivo, media_type="application/pdf", filename=nombre_con_ext)
+
+
+async def _resolver_y_servir_imagen_familia(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    nombre, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_POR_EXTENSION.get(ext.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    try:
+        cid = uuid.UUID(causa_id)
+        documento_id = uuid.UUID(nombre)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoFamilia).where(
+                DocumentoFamilia.id == documento_id,
+                DocumentoFamilia.causa_familia_id == cid,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
+
+
+# Declarada ANTES de `documento_familia` (2 segmentos): esta tiene un segmento "img" de
+# mas, asi que no colisiona por estructura de ruta, pero se deja primero por legibilidad.
+@router.get("/familia/{causa_id}/img/{nombre_con_ext}")
+async def imagen_familia(causa_id: str, nombre_con_ext: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_imagen_familia(session, causa_id, nombre_con_ext)
 
 
 # Declarada ANTES de las rutas civiles de 2 segmentos para que `/public/familia/<uuid>/<name>`

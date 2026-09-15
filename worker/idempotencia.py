@@ -39,4 +39,10 @@ def extension_por_content_type(content_type: str) -> str:
         return ".pdf"
     if "html" in content_type:
         return ".html"
+    if "jpeg" in content_type or "jpg" in content_type:
+        return ".jpg"
+    if "png" in content_type:
+        return ".png"
+    if "gif" in content_type:
+        return ".gif"
     return ".bin"
