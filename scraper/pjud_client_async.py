@@ -263,8 +263,9 @@ class _PjudModalScraper:
     # extraccion de anexos por popup). Familia la llama "Movimientos".
     PREFIJOS_HISTORIA = ("historia",)
     # Id del popup de la columna "Georeferencia" de Historia/Movimientos (None = la
-    # competencia no lo tiene). Solo Familia lo define por ahora.
-    MODAL_GEOREFERENCIA: str | None = None
+    # competencia no lo tiene). Default = Civil (columna "Georref." de Historia,
+    # confirmado en vivo en E-1798-2026); Familia lo sobreescribe con su propio modal.
+    MODAL_GEOREFERENCIA: str | None = "modalGeoReferenciaCivil"
     # Prefijos de pestanas, fuera de Historia/Movimientos, cuya columna "Anexo" tambien
     # abre un popup de `MODALES_ANEXO_HISTORIA` (misma extraccion generica). Civil:
     # "Piezas Exhorto" usa el mismo modalAnexoSolicitudCivil que Historia.

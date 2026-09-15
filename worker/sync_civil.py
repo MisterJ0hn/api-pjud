@@ -37,6 +37,7 @@ from api.db.models.movimientos import (
     MovimientoHistoria,
     MovimientoHistoriaAnexo,
     MovimientoHistoriaDoc,
+    MovimientoHistoriaGeoImagen,
     Notificacion,
     PiezaExhorto,
     PiezaExhortoAnexo,
@@ -265,6 +266,45 @@ async def _persistir_docs_anexos_historia(
             )
 
 
+async def _persistir_georeferencia_historia(
+    session: AsyncSession,
+    sesion_pjud: PjudSessionAsync,
+    causa: Causa,
+    cuaderno: Cuaderno,
+    mov: MovimientoHistoria,
+    fila: dict,
+    clave_base: str,
+    h: str,
+) -> None:
+    """Vuelca `fila["georeferencia_popup"]` (mapa + imagenes, ver
+    `_extraer_georeferencia_popup_historia` en el scraper -- mismo popup que Familia,
+    `modalGeoReferenciaCivil`) sobre el movimiento. Si la fila no trajo popup de
+    Georeferencia (causa sin datos en esa columna) no toca nada."""
+    datos = fila.get("georeferencia_popup")
+    if datos is None:
+        return
+    mapa = datos.get("mapa") or {}
+    mov.geo_latitud = mapa.get("latitud")
+    mov.geo_longitud = mapa.get("longitud")
+    mov.geo_corrector = mapa.get("corrector")
+
+    imagenes = datos.get("imagenes") or []
+    await session.execute(
+        delete(MovimientoHistoriaGeoImagen).where(MovimientoHistoriaGeoImagen.movimiento_id == mov.id)
+    )
+    for i, img in enumerate(imagenes, start=1):
+        doc = await _obtener_o_descargar_documento(
+            session, sesion_pjud, causa.id, cuaderno.id, "historia_georef_imagen",
+            f"{clave_base}_geo_img{i}", cuaderno.numero, img.get("src"),
+            referencia=img.get("alt"), hash_padre=h,
+        )
+        session.add(
+            MovimientoHistoriaGeoImagen(
+                movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i
+            )
+        )
+
+
 async def _folio_docs_completos(
     session: AsyncSession, mov_id: int, cuaderno_id: int, n_docs_esperado: int
 ) -> bool:
@@ -393,6 +433,7 @@ async def _sincronizar_historia(
             await _persistir_docs_anexos_historia(
                 session, sesion_pjud, causa, cuaderno, mov, fila, enlaces, clave_base, h
             )
+            await _persistir_georeferencia_historia(session, sesion_pjud, causa, cuaderno, mov, fila, clave_base, h)
             await session.commit()
             continue
 
@@ -443,6 +484,7 @@ async def _sincronizar_historia(
         await _persistir_docs_anexos_historia(
             session, sesion_pjud, causa, cuaderno, existente, fila, enlaces, clave_docs, h,
         )
+        await _persistir_georeferencia_historia(session, sesion_pjud, causa, cuaderno, existente, fila, clave_docs, h)
         await session.commit()
 
     if sorted(exhorto_nuevas) != exhorto_previas:

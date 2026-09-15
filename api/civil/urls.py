@@ -12,3 +12,10 @@ def url_publica_documento(causa_id, nombre_archivo: str, cuaderno_numero: int | 
     if cuaderno_numero is not None:
         return f"{base}/public/{causa_id}/{cuaderno_numero}/{nombre_archivo}.pdf"
     return f"{base}/public/{causa_id}/{nombre_archivo}.pdf"
+
+
+def url_publica_imagen(causa_id, cuaderno_numero: int, documento_id, extension: str) -> str:
+    # Imagenes del popup Georeferencia (Historia): sin nombre natural estable, se sirven
+    # por GUID (el id del Documento) en vez de por `nombre_archivo` como el resto.
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/public/{causa_id}/{cuaderno_numero}/img/{documento_id}{extension}"

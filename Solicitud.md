@@ -88,7 +88,7 @@ Response 200:
         "estado_proceso": "Tramitación", #Estado Proc.
         "etapa":"1 Notificación demanda y su proveído", #Etapa
         "tribunal":"1° Juzgado Civil de Valparaíso", #Tribunal
-        # Inicio Actualización 15-09-2026. Existen algunas causas, tienen Causa Origen:, como prueba E-1798-2026.
+        # Inicio Actualización 15-09-2026. Existen algunas causas, tienen Causa Origen:, como prueba E-1798-2026 - C-7623-2010 .
         "causa_origen": {
             "rol":"C-1964-2026",
             "tribunal": "4 ° Juzgado de Letras Civil de Antofagasta"

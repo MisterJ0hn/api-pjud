@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select, text, update
@@ -14,6 +15,9 @@ from api.civil.schemas import (
     ExhortoItem,
     ExhortoRolDestinoItem as ExhortoRolDestinoSchema,
     ExhortoRolItem,
+    GeoReferenciaImagenItem,
+    GeoReferenciaItem,
+    GeoReferenciaMapa,
     HistoriaAnexoItem,
     HistoriaDocItem,
     HistoriaItem,
@@ -24,7 +28,7 @@ from api.civil.schemas import (
     PiezaExhortoAnexoItem,
     PiezaExhortoItem,
 )
-from api.civil.urls import rol_formateado, url_publica_documento
+from api.civil.urls import rol_formateado, url_publica_documento, url_publica_imagen
 from api.db.models.cabecera import AnexoCausa, InformacionReceptor
 from api.db.models.causas import Causa, Cuaderno
 from api.db.models.documentos import Documento
@@ -37,6 +41,7 @@ from api.db.models.movimientos import (
     MovimientoHistoria,
     MovimientoHistoriaAnexo,
     MovimientoHistoriaDoc,
+    MovimientoHistoriaGeoImagen,
     Notificacion,
     PiezaExhorto,
     PiezaExhortoAnexo,
@@ -257,6 +262,13 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
         doc = docs_por_id.get(documento_id)
         return url_publica_documento(causa.id, doc.nombre_archivo) if doc else None
 
+    def imagen_url(documento_id) -> str | None:
+        doc = docs_por_id.get(documento_id)
+        if doc is None:
+            return None
+        _, ext = os.path.splitext(doc.ruta_archivo)
+        return url_publica_imagen(causa.id, cuaderno.numero, doc.id, ext)
+
     historia_rows = (
         await session.execute(
             select(MovimientoHistoria)
@@ -280,6 +292,26 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
                 .order_by(MovimientoHistoriaAnexo.orden)
             )
         ).scalars().all()
+        geo_img_rows = (
+            await session.execute(
+                select(MovimientoHistoriaGeoImagen)
+                .where(MovimientoHistoriaGeoImagen.movimiento_id == h.id)
+                .order_by(MovimientoHistoriaGeoImagen.orden)
+            )
+        ).scalars().all()
+        tiene_mapa = h.geo_latitud is not None or h.geo_longitud is not None or h.geo_corrector is not None
+        georeferencia = (
+            GeoReferenciaItem(
+                mapa=(
+                    GeoReferenciaMapa(latitud=h.geo_latitud, longitud=h.geo_longitud, corrector=h.geo_corrector)
+                    if tiene_mapa
+                    else None
+                ),
+                imagenes=[GeoReferenciaImagenItem(img=imagen_url(i.documento_id)) for i in geo_img_rows],
+            )
+            if tiene_mapa or geo_img_rows
+            else None
+        )
         historia_items.append(
             HistoriaItem(
                 folio=h.folio,
@@ -295,6 +327,7 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
                 descripcion_tramite=h.descripcion_tramite,
                 fecha_tramite=h.fecha_tramite,
                 foja=h.foja,
+                georeferencia=georeferencia,
             )
         )
 

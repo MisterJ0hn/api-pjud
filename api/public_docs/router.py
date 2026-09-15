@@ -57,6 +57,41 @@ async def _resolver_y_servir(
     return FileResponse(documento.ruta_archivo, media_type="application/pdf", filename=nombre_con_ext)
 
 
+async def _resolver_y_servir_imagen(
+    session: AsyncSession, causa_id: str, cuaderno_numero: int, nombre_con_ext: str
+) -> FileResponse:
+    nombre, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_POR_EXTENSION.get(ext.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    try:
+        cid = uuid.UUID(causa_id)
+        documento_id = uuid.UUID(nombre)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    cuaderno = (
+        await session.execute(select(Cuaderno).where(Cuaderno.causa_id == cid, Cuaderno.numero == cuaderno_numero))
+    ).scalar_one_or_none()
+    if cuaderno is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(Documento).where(
+                Documento.id == documento_id,
+                Documento.causa_id == cid,
+                Documento.cuaderno_id == cuaderno.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
+
+
 async def _resolver_y_servir_familia(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
     if not nombre_con_ext.lower().endswith(".pdf"):
         raise HTTPException(status_code=404, detail="No encontrado")
@@ -135,3 +170,11 @@ async def documento_cuaderno(
     causa_id: str, cuaderno_numero: int, nombre_archivo: str, session: AsyncSession = Depends(get_session)
 ):
     return await _resolver_y_servir(session, causa_id, nombre_archivo, cuaderno_numero)
+
+
+# 4 segmentos ("img" de mas): no colisiona con `documento_cuaderno` (3 segmentos).
+@router.get("/{causa_id}/{cuaderno_numero}/img/{nombre_con_ext}")
+async def imagen_cuaderno(
+    causa_id: str, cuaderno_numero: int, nombre_con_ext: str, session: AsyncSession = Depends(get_session)
+):
+    return await _resolver_y_servir_imagen(session, causa_id, cuaderno_numero, nombre_con_ext)

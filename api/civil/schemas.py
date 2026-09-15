@@ -109,6 +109,24 @@ class HistoriaDocItem(BaseModel):
     doc: str | None = None
 
 
+class GeoReferenciaMapa(BaseModel):
+    latitud: str | None = None
+    longitud: str | None = None
+    corrector: str | None = None
+
+
+class GeoReferenciaImagenItem(BaseModel):
+    img: str | None = None
+
+
+class GeoReferenciaItem(BaseModel):
+    mapa: GeoReferenciaMapa | None = None
+    imagenes: list[GeoReferenciaImagenItem] = Field(default_factory=list)
+    # PJUD no trae ejemplos de video en el popup todavia; queda vacio hasta conocer su
+    # estructura.
+    videos: list = Field(default_factory=list)
+
+
 class HistoriaItem(BaseModel):
     # `folio`: parte numerica (para ordenar/compatibilidad). `folio_texto`: el folio tal
     # cual lo muestra PJUD -- "33" o "[6E]" para los movimientos de un exhorto.
@@ -122,6 +140,7 @@ class HistoriaItem(BaseModel):
     descripcion_tramite: str | None = None
     fecha_tramite: str | None = None
     foja: int | None = None
+    georeferencia: GeoReferenciaItem | None = None
 
 
 class LitiganteItem(BaseModel):
