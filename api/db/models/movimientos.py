@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -204,3 +206,53 @@ class ExhortoRolDestinoItem(Base):
     rol_destino: Mapped["ExhortoRolDestino"] = relationship(back_populates="items")
 
     __table_args__ = (UniqueConstraint("rol_destino_id", "orden", name="uq_exhorto_item_rol_destino_orden"),)
+
+
+class PiezaExhorto(Base):
+    """Pestana "Piezas Exhorto" del modal de causa civil: tabla causa-wide (no depende del
+    cuaderno seleccionado -- su propia columna "Cuaderno" no corresponde a los cuadernos
+    locales de la causa, ver `cuaderno_texto`) con los tramites del exhorto en el
+    tribunal de destino. Folio/foja/fecha_tramite/cuaderno se repiten sin ningun campo
+    que los distinga (visto en E-1798-2026: folio "33" y foja "31" cada uno dos veces),
+    asi que -- igual que los "[NE]" de Historia -- no hay clave natural: se borra e
+    inserta entera cada sync, en el mismo orden de PJUD (`orden`)."""
+
+    __tablename__ = "piezas_exhorto"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    causa_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("causas.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    folio: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    cuaderno_texto: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos.id"), nullable=True)
+    etapa: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    tramite: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    descripcion_tramite: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    fecha_tramite: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    foja: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    hash_contenido: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    anexos: Mapped[list["PiezaExhortoAnexo"]] = relationship(
+        back_populates="pieza", cascade="all, delete-orphan", order_by="PiezaExhortoAnexo.orden"
+    )
+
+    __table_args__ = (UniqueConstraint("causa_id", "orden", name="uq_piezas_exhorto_causa_orden"),)
+
+
+class PiezaExhortoAnexo(Base):
+    __tablename__ = "piezas_exhorto_anexos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pieza_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("piezas_exhorto.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos.id"), nullable=True)
+    orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    pieza: Mapped["PiezaExhorto"] = relationship(back_populates="anexos")
+
+    __table_args__ = (UniqueConstraint("pieza_id", "orden", name="uq_pieza_exhorto_anexo_pieza_orden"),)

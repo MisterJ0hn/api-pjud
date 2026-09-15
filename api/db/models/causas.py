@@ -31,6 +31,11 @@ class Causa(Base):
     estado_proceso: Mapped[str | None] = mapped_column(String(200), nullable=True)
     etapa: Mapped[str | None] = mapped_column(String(300), nullable=True)
     tribunal_nombre: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Causas de tipo Exhorto ("E-...") muestran de donde vinieron: rol y tribunal de la
+    # causa que origino el exhorto (ej. E-1798-2026 <- C-1964-2026). No todas las causas
+    # lo traen.
+    causa_origen_rol: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    causa_origen_tribunal: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     estado_sync: Mapped[str] = mapped_column(String(15), nullable=False, default="Pendiente")
     sync_detalle: Mapped[str | None] = mapped_column(String(300), nullable=True)

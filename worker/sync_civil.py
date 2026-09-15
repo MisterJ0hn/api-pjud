@@ -38,6 +38,8 @@ from api.db.models.movimientos import (
     MovimientoHistoriaAnexo,
     MovimientoHistoriaDoc,
     Notificacion,
+    PiezaExhorto,
+    PiezaExhortoAnexo,
 )
 from api.db.models.tribunales import TribunalCatalogo
 from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionAsync, PjudSessionPrivada
@@ -608,6 +610,82 @@ async def _sincronizar_exhortos(
     return hubo_cambios
 
 
+async def _sincronizar_piezas_exhorto(
+    session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, tabla: dict
+) -> bool:
+    """Pestana "Piezas Exhorto" (causa-wide, ver `PiezaExhorto`): folio/foja/fecha_tramite
+    /cuaderno se repiten sin ningun campo que distinga las filas (visto en E-1798-2026:
+    folio "33" y foja "31" cada uno dos veces), asi que -- igual que los "[NE]" de
+    Historia -- no hay clave natural: se borra e inserta entera cada sync, en el mismo
+    orden de PJUD (`orden` = indice de fila). Las descargas siguen siendo idempotentes
+    por `clave_logica` (basada en esa posicion), asi que el borrar+reinsertar no vuelve a
+    pedirle nada a PJUD si el contenido no cambio."""
+    filas = tabla.get("filas", [])
+
+    previas = sorted(
+        tuple(r)
+        for r in (
+            await session.execute(
+                select(PiezaExhorto.orden, PiezaExhorto.hash_contenido).where(PiezaExhorto.causa_id == causa.id)
+            )
+        ).all()
+    )
+    await session.execute(delete(PiezaExhorto).where(PiezaExhorto.causa_id == causa.id))
+    await session.commit()
+
+    nuevas: list[tuple[int, str]] = []
+    for idx, fila in enumerate(filas):
+        valores = fila["valores"]
+        enlaces = fila.get("enlaces", {})
+        h = hash_fila(valores)
+        nuevas.append((idx, h))
+        clave_base = f"pieza_exhorto_{idx}"
+
+        doc_urls = enlaces.get("Doc.") or []
+        documento_id = None
+        if doc_urls:
+            doc = await _obtener_o_descargar_documento(
+                session, sesion_pjud, causa.id, None, "pieza_exhorto", clave_base, None, doc_urls[0], hash_padre=h,
+            )
+            documento_id = doc.id if doc else None
+
+        foja_raw = (valores.get("Foja") or "").strip()
+        # "Támite" (sin 'r') es el typo real de PJUD en los headers de esta pestana, no
+        # el de Historia ("Trámite").
+        pieza = PiezaExhorto(
+            causa_id=causa.id,
+            orden=idx,
+            folio=(valores.get("Folio") or "").strip() or None,
+            cuaderno_texto=(valores.get("Cuaderno") or "").strip() or None,
+            documento_id=documento_id,
+            etapa=valores.get("Etapa") or None,
+            tramite=valores.get("Támite") or None,
+            descripcion_tramite=valores.get("Desc. Támite") or None,
+            fecha_tramite=valores.get("Fec. Támite") or None,
+            foja=foja_raw or None,
+            hash_contenido=h,
+        )
+        session.add(pieza)
+        await session.flush()
+
+        for i, a in enumerate(fila.get("anexos_popup") or [], start=1):
+            doc = None
+            if a.get("doc"):
+                doc = await _obtener_o_descargar_documento(
+                    session, sesion_pjud, causa.id, None, "pieza_exhorto_anexo",
+                    f"{clave_base}_anexo{i}", None, a["doc"], referencia=a.get("referencia"), hash_padre=h,
+                )
+            session.add(
+                PiezaExhortoAnexo(
+                    pieza_id=pieza.id, documento_id=doc.id if doc else None, orden=i,
+                    fecha=a.get("fecha"), referencia=a.get("referencia"),
+                )
+            )
+        await session.commit()
+
+    return sorted(nuevas) != previas
+
+
 async def sincronizar_causa(
     session: AsyncSession,
     sesion_pjud: PjudSessionAsync | PjudSessionPrivada,
@@ -667,9 +745,18 @@ async def sincronizar_causa(
     causa.estado_proceso = campos.get("Estado Proc.") or causa.estado_proceso
     causa.etapa = campos.get("Etapa") or causa.etapa
     causa.tribunal_nombre = campos.get("Tribunal") or causa.tribunal_nombre
+    # Solo causas de tipo Exhorto lo traen (ver JS_EXTRAER_CABECERA: "Causa Origen" queda
+    # en `campos` porque trae el rol como texto visible junto al icono, sin necesidad de
+    # abrir su popup).
+    causa.causa_origen_rol = campos.get("Causa Origen") or causa.causa_origen_rol
+    causa.causa_origen_tribunal = campos.get("Tribunal Origen") or causa.causa_origen_tribunal
     await session.commit()
 
     hubo_cambios = False
+    # "Piezas Exhorto" es causa-wide (ver `PiezaExhorto`), no por cuaderno -- se
+    # sincroniza una sola vez, con la primera aparicion de la pestana que encontremos
+    # recorriendo los cuadernos (best-effort: solo probado con causas de un cuaderno).
+    piezas_exhorto_sincronizado = False
 
     # --- Cuadernos y sus pestanas -----------------------------------------------
     for c in resultado.get("cuadernos", []):
@@ -703,6 +790,11 @@ async def sincronizar_causa(
             await _rep(f"Guardando exhortos de cuaderno {cuaderno.nombre}")
             if await _sincronizar_exhortos(session, sesion_pjud, causa, cuaderno, secciones["Exhortos"]):
                 hubo_cambios = True
+        if "Piezas Exhorto" in secciones and not piezas_exhorto_sincronizado:
+            await _rep("Guardando piezas del exhorto")
+            if await _sincronizar_piezas_exhorto(session, sesion_pjud, causa, secciones["Piezas Exhorto"]):
+                hubo_cambios = True
+            piezas_exhorto_sincronizado = True
 
     # --- Cabecera: anexos_causa, informacion_receptor ----------------------------
     if cabecera.get("submodales"):

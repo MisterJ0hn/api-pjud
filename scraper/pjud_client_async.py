@@ -186,7 +186,19 @@ JS_EXTRAER_CABECERA = """(modalId) => {
                     descargas.push({label, url: url.toString()});
                 }
             } else if (modalLink) {
-                submodales.push({label, target: modalLink.getAttribute('href')});
+                // La mayoria de estos son iconos sin texto propio (Anexos de la causa,
+                // Informacion notificaciones receptor: se abren en un submodal aparte).
+                // "Causa Origen" es la excepcion: trae el rol como texto directo en la
+                // MISMA celda junto al icono -- no hace falta abrir el popup para leerlo.
+                const clone = td.cloneNode(true);
+                const strongClone = clone.querySelector('strong');
+                if (strongClone) strongClone.remove();
+                const texto = clone.textContent.replace(/\\s+/g, ' ').trim();
+                if (label && texto) {
+                    campos[label] = texto;
+                } else {
+                    submodales.push({label, target: modalLink.getAttribute('href')});
+                }
             } else if (select) {
                 // el select de cuaderno se procesa aparte
             } else if (label) {
@@ -253,6 +265,10 @@ class _PjudModalScraper:
     # Id del popup de la columna "Georeferencia" de Historia/Movimientos (None = la
     # competencia no lo tiene). Solo Familia lo define por ahora.
     MODAL_GEOREFERENCIA: str | None = None
+    # Prefijos de pestanas, fuera de Historia/Movimientos, cuya columna "Anexo" tambien
+    # abre un popup de `MODALES_ANEXO_HISTORIA` (misma extraccion generica). Civil:
+    # "Piezas Exhorto" usa el mismo modalAnexoSolicitudCivil que Historia.
+    PREFIJOS_ANEXO_POPUP_EXTRA: tuple[str, ...] = ("piezas exhorto",)
 
     async def _reportar(self, texto: str) -> None:
         if self._progreso is None:
@@ -460,6 +476,8 @@ class _PjudModalScraper:
                 await self._extraer_anexos_popup_historia(pane_id, seccion)
                 if self.MODAL_GEOREFERENCIA:
                     await self._extraer_georeferencia_popup_historia(pane_id, seccion)
+            elif _es_seccion_historia(tab["nombre"], self.PREFIJOS_ANEXO_POPUP_EXTRA):
+                await self._extraer_anexos_popup_historia(pane_id, seccion)
             secciones[tab["nombre"]] = seccion
         return secciones
 

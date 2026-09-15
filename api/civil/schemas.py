@@ -52,6 +52,11 @@ class CuadernoItem(BaseModel):
     nombre: str
 
 
+class CausaOrigenItem(BaseModel):
+    rol: str | None = None
+    tribunal: str | None = None
+
+
 class CausaDetalle(BaseModel):
     identificador: str
     # "Sincronizando" | "Completo" | "Error".
@@ -72,6 +77,8 @@ class CausaDetalle(BaseModel):
     estado_proceso: str | None = None
     etapa: str | None = None
     tribunal: str | None = None
+    # Solo causas de tipo Exhorto lo traen (ej. E-1798-2026 <- C-1964-2026).
+    causa_origen: CausaOrigenItem | None = None
     texto_demanda: DocumentoRef | None = None
     certificado_envio: DocumentoRef | None = None
     ebook: DocumentoRef | None = None
@@ -165,6 +172,25 @@ class ExhortoItem(BaseModel):
     estado_exhorto: str | None = None
 
 
+class PiezaExhortoAnexoItem(BaseModel):
+    doc: str | None = None
+    fecha: str | None = None
+    referencia: str | None = None
+
+
+class PiezaExhortoItem(BaseModel):
+    # Puede venir vacio o con letras.
+    folio: str | None = None
+    doc: str | None = None
+    cuaderno: str | None = None
+    anexo: list[PiezaExhortoAnexoItem] = Field(default_factory=list)
+    etapa: str | None = None
+    tramite: str | None = None
+    descripcion_tramite: str | None = None
+    fecha_tramite: str | None = None
+    foja: str | None = None
+
+
 class MovimientosResponse(BaseModel):
     exito: bool = True
     code: int = 200
@@ -173,3 +199,6 @@ class MovimientosResponse(BaseModel):
     notificaciones: list[NotificacionItem] = Field(default_factory=list)
     escritos_resolver: list[EscritoResolverItem] = Field(default_factory=list)
     exhortos: list[ExhortoItem] = Field(default_factory=list)
+    # Causa-wide (no depende del "cuadeno" pedido): tramites del exhorto en el tribunal
+    # de destino. Solo causas de tipo Exhorto lo traen.
+    piezas_exhorto: list[PiezaExhortoItem] = Field(default_factory=list)

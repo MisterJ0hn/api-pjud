@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.civil.schemas import (
     AnexoCausaItem,
     CausaDetalle,
+    CausaOrigenItem,
     CuadernoItem,
     DocumentoRef,
     EscritoResolverItem,
@@ -20,6 +21,8 @@ from api.civil.schemas import (
     LitiganteItem,
     MovimientosResponse,
     NotificacionItem,
+    PiezaExhortoAnexoItem,
+    PiezaExhortoItem,
 )
 from api.civil.urls import rol_formateado, url_publica_documento
 from api.db.models.cabecera import AnexoCausa, InformacionReceptor
@@ -35,6 +38,8 @@ from api.db.models.movimientos import (
     MovimientoHistoriaAnexo,
     MovimientoHistoriaDoc,
     Notificacion,
+    PiezaExhorto,
+    PiezaExhortoAnexo,
 )
 from api.db.models.sync_job import SyncJob
 
@@ -219,6 +224,11 @@ async def construir_causa_detalle(session: AsyncSession, causa: Causa) -> CausaD
         estado_proceso=causa.estado_proceso,
         etapa=causa.etapa,
         tribunal=causa.tribunal_nombre,
+        causa_origen=(
+            CausaOrigenItem(rol=causa.causa_origen_rol, tribunal=causa.causa_origen_tribunal)
+            if causa.causa_origen_rol or causa.causa_origen_tribunal
+            else None
+        ),
         texto_demanda=_doc_ref(docs_por_categoria.get("texto_demanda"), causa.id),
         certificado_envio=_doc_ref(docs_por_categoria.get("certificado_envio"), causa.id),
         ebook=_doc_ref(docs_por_categoria.get("ebook"), causa.id),
@@ -240,6 +250,12 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
     def doc_url(documento_id) -> str | None:
         doc = docs_por_id.get(documento_id)
         return url_publica_documento(causa.id, doc.nombre_archivo, cuaderno.numero) if doc else None
+
+    def doc_url_causa(documento_id) -> str | None:
+        # Piezas Exhorto es causa-wide (no por cuaderno), a diferencia del resto de
+        # `construir_movimientos`.
+        doc = docs_por_id.get(documento_id)
+        return url_publica_documento(causa.id, doc.nombre_archivo) if doc else None
 
     historia_rows = (
         await session.execute(
@@ -367,10 +383,40 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
             )
         )
 
+    pieza_rows = (
+        await session.execute(
+            select(PiezaExhorto).where(PiezaExhorto.causa_id == causa.id).order_by(PiezaExhorto.orden)
+        )
+    ).scalars().all()
+    piezas_exhorto = []
+    for p in pieza_rows:
+        anexo_rows = (
+            await session.execute(
+                select(PiezaExhortoAnexo).where(PiezaExhortoAnexo.pieza_id == p.id).order_by(PiezaExhortoAnexo.orden)
+            )
+        ).scalars().all()
+        piezas_exhorto.append(
+            PiezaExhortoItem(
+                folio=p.folio,
+                doc=doc_url_causa(p.documento_id),
+                cuaderno=p.cuaderno_texto,
+                anexo=[
+                    PiezaExhortoAnexoItem(doc=doc_url_causa(a.documento_id), fecha=a.fecha, referencia=a.referencia)
+                    for a in anexo_rows
+                ],
+                etapa=p.etapa,
+                tramite=p.tramite,
+                descripcion_tramite=p.descripcion_tramite,
+                fecha_tramite=p.fecha_tramite,
+                foja=p.foja,
+            )
+        )
+
     return MovimientosResponse(
         historia=historia_items,
         litigantes=litigantes,
         notificaciones=notificaciones,
         escritos_resolver=escritos_resolver,
         exhortos=exhortos,
+        piezas_exhorto=piezas_exhorto,
     )
