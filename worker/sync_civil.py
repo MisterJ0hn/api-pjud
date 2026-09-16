@@ -114,11 +114,21 @@ async def _documento_en_disco(session: AsyncSession, documento_id) -> bool:
 
 
 async def _descargar_a_disco(
-    sesion_pjud: PjudSessionAsync, url: str, causa_id, clave_logica: str, cuaderno_numero: int | None
+    sesion_pjud: PjudSessionAsync,
+    url: str | None,
+    causa_id,
+    clave_logica: str,
+    cuaderno_numero: int | None,
+    post: dict | None = None,
 ) -> str | None:
-    """Descarga `url` y la escribe en disco. Devuelve la ruta, o None si PJUD no
-    entrego un documento real (placeholder HTML, error de Oracle, HTTP != 2xx)."""
-    resultado = await sesion_pjud.descargar_bytes(url)
+    """Descarga `url` (GET) o `post` (form POST -- ver `descargar_post_bytes`, usado por
+    p. ej. el popup "Detalle de Tramite del Exhorto") y la escribe en disco. Devuelve la
+    ruta, o None si PJUD no entrego un documento real (placeholder HTML, error de
+    Oracle, HTTP != 2xx)."""
+    if post:
+        resultado = await sesion_pjud.descargar_post_bytes(post["url"], post["field"], post["value"])
+    else:
+        resultado = await sesion_pjud.descargar_bytes(url)
     if resultado is None:
         return None
     content_type, cuerpo = resultado
@@ -136,10 +146,11 @@ async def _obtener_o_descargar_documento(
     categoria: str,
     clave_logica: str,
     cuaderno_numero: int | None,
-    url: str,
+    url: str | None,
     referencia: str | None = None,
     hash_padre: str | None = None,
     forzar: bool = False,
+    post: dict | None = None,
 ) -> Documento | None:
     """Idempotencia real: si ya existe un Documento con esta clave_logica NO se vuelve a
     llamar a PJUD... salvo que su archivo ya no este en disco (descarga que fallo en un
@@ -148,7 +159,8 @@ async def _obtener_o_descargar_documento(
 
     `forzar=True` (usado para el ebook, que PJUD regenera completo cada vez que se
     agrega un documento nuevo a la causa) se salta esa idempotencia y siempre vuelve a
-    pedirlo a PJUD, sobreescribiendo el archivo en disco."""
+    pedirlo a PJUD, sobreescribiendo el archivo en disco. `post` (dict con url/field/
+    value): descarga por form POST en vez de GET (ver `_descargar_a_disco`)."""
     existente = (
         await session.execute(select(Documento).where(Documento.causa_id == causa_id, Documento.clave_logica == clave_logica))
     ).scalar_one_or_none()
@@ -160,7 +172,7 @@ async def _obtener_o_descargar_documento(
                 "Documento '%s' registrado pero sin archivo en disco (%s); se re-descarga",
                 clave_logica, existente.ruta_archivo,
             )
-        ruta = await _descargar_a_disco(sesion_pjud, url, causa_id, clave_logica, cuaderno_numero)
+        ruta = await _descargar_a_disco(sesion_pjud, url, causa_id, clave_logica, cuaderno_numero, post)
         if ruta is None:
             logger.warning("Re-descarga de '%s' fallo; queda pendiente para el proximo sync", clave_logica)
             return existente
@@ -168,7 +180,7 @@ async def _obtener_o_descargar_documento(
         await session.flush()
         return existente
 
-    ruta = await _descargar_a_disco(sesion_pjud, url, causa_id, clave_logica, cuaderno_numero)
+    ruta = await _descargar_a_disco(sesion_pjud, url, causa_id, clave_logica, cuaderno_numero, post)
     if ruta is None:
         return None
 
@@ -572,11 +584,17 @@ async def _reemplazar_notificaciones(session: AsyncSession, cuaderno: Cuaderno, 
 async def _sincronizar_escritos_resolver(
     session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict
 ) -> bool:
+    """"Escritos por Resolver" es un listado temporal: PJUD saca la fila de esta pestana
+    despues de un tiempo (no determinado -- confirmado por el usuario 2026-09-16), no
+    solo agrega filas nuevas. Los escritos que ya estaban guardados pero no aparecen en
+    el scrape actual se borran al final (cascada a sus anexos, `EscritoResolverAnexo`)."""
     hubo_cambios = False
+    hashes_vistos: set[str] = set()
     for fila in tabla.get("filas", []):
         valores = fila["valores"]
         enlaces = fila.get("enlaces", {})
         h = hash_fila(valores)
+        hashes_vistos.add(h)
         existente = (
             await session.execute(
                 select(EscritoResolver).where(EscritoResolver.cuaderno_id == cuaderno.id, EscritoResolver.contenido_hash == h)
@@ -640,20 +658,31 @@ async def _sincronizar_escritos_resolver(
                 )
             )
         await session.commit()
+
+    condiciones_obsoletos = [EscritoResolver.cuaderno_id == cuaderno.id]
+    if hashes_vistos:
+        condiciones_obsoletos.append(EscritoResolver.contenido_hash.not_in(hashes_vistos))
+    ids_obsoletos = (
+        await session.execute(select(EscritoResolver.id).where(*condiciones_obsoletos))
+    ).scalars().all()
+    if ids_obsoletos:
+        await session.execute(delete(EscritoResolver).where(EscritoResolver.id.in_(ids_obsoletos)))
+        await session.commit()
+        hubo_cambios = True
     return hubo_cambios
 
 
 async def _sincronizar_exhortos(
     session: AsyncSession, sesion_pjud: PjudSessionAsync, causa: Causa, cuaderno: Cuaderno, tabla: dict
 ) -> bool:
-    """Best-effort: no se conto con una causa real con exhortos con contenido durante el
-    desarrollo (ver plan), asi que la agrupacion en rol_destino[] usa el propio texto de
-    la celda "Rol Destino" como nombre del (unico) grupo, y cada enlace encontrado en esa
-    celda se registra como un item de ese grupo. Revisar contra un caso real."""
+    """"Rol Destino" es un <label data-toggle="modal"> (no un <a>) que abre el popup
+    `modalExhortoCivil` ("Detalle de Tramite del Exhorto": Doc./Fecha/Referencia/Tramite,
+    Doc. por form POST) -- confirmado en vivo en C-1964-2026, 2026-09-16. El texto propio
+    de la celda (el rol destino, p. ej. "E-1798-2026") se preserva como `nombre` del
+    grupo (ver `_extraer_anexos_popup_historia` en el scraper)."""
     hubo_cambios = False
     for fila in tabla.get("filas", []):
         valores = fila["valores"]
-        enlaces = fila.get("enlaces", {})
         rol_origen = valores.get("Rol Origen")
         tipo_exhorto = valores.get("Tipo Exhorto")
 
@@ -675,18 +704,31 @@ async def _sincronizar_exhortos(
         existente.estado_exhorto = valores.get("Estado Exhorto")
         await session.flush()
 
-        rol_destino_urls = enlaces.get("Rol Destino") or []
-        if rol_destino_urls:
+        anexos_popup = fila.get("anexos_popup") or []
+        if anexos_popup:
             await session.execute(delete(ExhortoRolDestino).where(ExhortoRolDestino.exhorto_id == existente.id))
-            grupo = ExhortoRolDestino(exhorto_id=existente.id, nombre=valores.get("Rol Destino") or "destino")
+            grupo = ExhortoRolDestino(exhorto_id=existente.id, nombre=(valores.get("Rol Destino") or "destino")[:30])
             session.add(grupo)
             await session.flush()
-            for i, url in enumerate(rol_destino_urls, start=1):
-                doc = await _obtener_o_descargar_documento(
-                    session, sesion_pjud, causa.id, cuaderno.id, "exhorto",
-                    f"exhorto_c{cuaderno.numero}_{slug(rol_origen)}_{slug(tipo_exhorto)}_item{i}", cuaderno.numero, url,
+            for i, a in enumerate(anexos_popup, start=1):
+                v_item = a.get("valores") or {}
+                clave = f"exhorto_c{cuaderno.numero}_{slug(rol_origen)}_{slug(tipo_exhorto)}_item{i}"
+                doc = None
+                if a.get("doc") or a.get("doc_post"):
+                    doc = await _obtener_o_descargar_documento(
+                        session, sesion_pjud, causa.id, cuaderno.id, "exhorto", clave, cuaderno.numero,
+                        a.get("doc"), post=a.get("doc_post"),
+                    )
+                session.add(
+                    ExhortoRolDestinoItem(
+                        rol_destino_id=grupo.id,
+                        documento_id=doc.id if doc else None,
+                        orden=i,
+                        fecha=v_item.get("Fecha") or None,
+                        referencia=v_item.get("Referencia") or None,
+                        tramite=v_item.get("Trámite") or None,
+                    )
                 )
-                session.add(ExhortoRolDestinoItem(rol_destino_id=grupo.id, documento_id=doc.id if doc else None, orden=i))
             hubo_cambios = True
         await session.commit()
     return hubo_cambios

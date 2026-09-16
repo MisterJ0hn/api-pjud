@@ -152,7 +152,10 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
                     });
                 }
             });
-            Array.from(td.querySelectorAll('a[href]')).forEach(a => {
+            // El trigger de un popup no siempre es un <a> -- "Rol Destino" de Exhortos
+            // usa un <label data-toggle="modal">. Los enlaces reales a documentos si son
+            // siempre <a href> externo, asi que ese selector se mantiene aparte.
+            Array.from(td.querySelectorAll('a[href], label[data-toggle="modal"][href]')).forEach(a => {
                 const href = a.getAttribute('href');
                 if (!href || href.toLowerCase().startsWith('javascript:')) return;
                 if (href.startsWith('#')) {
@@ -162,7 +165,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
                     }
                     return;
                 }
-                urls.push(new URL(href, location.href).toString());
+                if (a.tagName === 'A') urls.push(new URL(href, location.href).toString());
             });
             if (urls.length) enlaces[header] = urls;
         });
@@ -263,10 +266,12 @@ class _PjudModalScraper:
     _progreso = None
     # Ids de los popups que puede abrir la columna "Anexo(s)" de Historia/Movimientos.
     # Civil: `modalAnexoSolicitudCivil` (Historia/Piezas Exhorto), `modalAnexoSolEscritoCivil`
-    # (Escritos por Resolver, confirmado en vivo en C-1964-2026 -- 2026-09-16). Familia:
-    # `modalAnexoEscritoFamilia` (Anexo del Escrito, GET) y `modalSIIFamilia` (Documentos
-    # SII, POST).
-    MODALES_ANEXO_HISTORIA = ("modalAnexoSolicitudCivil", "modalAnexoSolEscritoCivil")
+    # (Escritos por Resolver, confirmado en vivo en C-1964-2026 -- 2026-09-16),
+    # `modalExhortoCivil` ("Detalle de Tramite del Exhorto", columna "Rol Destino" de
+    # Exhortos -- trigger es un <label>, no un <a>; forms POST `formTram`, confirmado en
+    # vivo en C-1964-2026). Familia: `modalAnexoEscritoFamilia` (Anexo del Escrito, GET)
+    # y `modalSIIFamilia` (Documentos SII, POST).
+    MODALES_ANEXO_HISTORIA = ("modalAnexoSolicitudCivil", "modalAnexoSolEscritoCivil", "modalExhortoCivil")
     # Prefijos del nombre de la pestana que se trata como "Historia" (dispara la
     # extraccion de anexos por popup). Familia la llama "Movimientos".
     PREFIJOS_HISTORIA = ("historia",)
@@ -277,8 +282,10 @@ class _PjudModalScraper:
     # Prefijos de pestanas, fuera de Historia/Movimientos, cuya columna "Anexo" tambien
     # abre un popup de `MODALES_ANEXO_HISTORIA` (misma extraccion generica). Civil:
     # "Piezas Exhorto" usa el mismo modalAnexoSolicitudCivil que Historia; "Escritos por
-    # Resolver" usa su propio modalAnexoSolEscritoCivil (mismas columnas Fecha/Referencia).
-    PREFIJOS_ANEXO_POPUP_EXTRA: tuple[str, ...] = ("piezas exhorto", "escritos por resolver")
+    # Resolver" usa su propio modalAnexoSolEscritoCivil (mismas columnas Fecha/Referencia);
+    # "Exhortos" usa modalExhortoCivil en la columna "Rol Destino" (Doc./Fecha/Referencia/
+    # Tramite).
+    PREFIJOS_ANEXO_POPUP_EXTRA: tuple[str, ...] = ("piezas exhorto", "escritos por resolver", "exhortos")
 
     async def _reportar(self, texto: str) -> None:
         if self._progreso is None:
@@ -519,8 +526,9 @@ class _PjudModalScraper:
                 continue
             col_anexo, popup_id = match
             popup_href = f"#{popup_id}"
-            # Localiza el <a> de ESTA fila (mismo criterio de filas que
-            # JS_EXTRAER_FILAS_CON_ENLACES: filas de tbody con >= 1 <td>).
+            # Localiza el trigger de ESTA fila (mismo criterio de filas que
+            # JS_EXTRAER_FILAS_CON_ENLACES: filas de tbody con >= 1 <td>). El trigger no
+            # siempre es un <a> -- "Rol Destino" de Exhortos usa un <label>.
             clicked = await page.evaluate(
                 """([paneId, idx, popupHref]) => {
                     const cont = document.getElementById(paneId);
@@ -531,7 +539,7 @@ class _PjudModalScraper:
                     const conCeldas = Array.from(rows).filter(tr => tr.querySelectorAll('td').length);
                     const tr = conCeldas[idx];
                     if (!tr) return false;
-                    const a = tr.querySelector('a[data-toggle="modal"][href="' + popupHref + '"]');
+                    const a = tr.querySelector('[data-toggle="modal"][href="' + popupHref + '"]');
                     if (!a) return false;
                     a.click();
                     return true;
@@ -558,9 +566,15 @@ class _PjudModalScraper:
                     }
                 )
             fila.setdefault("anexos_popup", []).extend(anexos)
-            fila.setdefault("valores", {})[col_anexo] = " | ".join(
-                "~".join(str(x) for x in a.get("valores", {}).values()) for a in anexos
-            )
+            valores_fila = fila.setdefault("valores", {})
+            # Normalmente esta celda solo tiene un icono/carpeta (texto vacio) y se
+            # reemplaza por un resumen del contenido del popup para que el hash de la
+            # fila detecte altas/bajas. "Rol Destino" de Exhortos es la excepcion: ya
+            # trae el rol como texto util (p. ej. "E-1798-2026") que no hay que perder.
+            if not (valores_fila.get(col_anexo) or "").strip():
+                valores_fila[col_anexo] = " | ".join(
+                    "~".join(str(x) for x in a.get("valores", {}).values()) for a in anexos
+                )
             await page.evaluate(
                 """(popupId) => {
                     const m = document.getElementById(popupId);
