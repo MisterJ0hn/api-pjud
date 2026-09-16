@@ -1,6 +1,6 @@
 """anexos_causa / anexos_causa_familia: columna target
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: d8a2c038b60c
 Revises: e1f2a3b4c5d6
 Create Date: 2026-09-16 12:00:00.000000
 
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = 'a1b2c3d4e5f6'
+revision: str = 'd8a2c038b60c'
 down_revision: Union[str, None] = 'e1f2a3b4c5d6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
