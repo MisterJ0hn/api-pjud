@@ -692,8 +692,10 @@ async def _sincronizar_piezas_exhorto(
             documento_id = doc.id if doc else None
 
         foja_raw = (valores.get("Foja") or "").strip()
-        # "Támite" (sin 'r') es el typo real de PJUD en los headers de esta pestana, no
-        # el de Historia ("Trámite").
+        # PJUD escribe este header distinto segun la vista: "Támite" (sin 'r', typo) en
+        # la Consulta Unificada publica, "Trámite" (bien escrito) en Mis Causas /
+        # modo privado -- confirmado en vivo en E-1798-2026 (2026-09-16). Se prueban
+        # ambas variantes por si el sync corre en cualquiera de los dos modos.
         pieza = PiezaExhorto(
             causa_id=causa.id,
             orden=idx,
@@ -701,9 +703,9 @@ async def _sincronizar_piezas_exhorto(
             cuaderno_texto=(valores.get("Cuaderno") or "").strip() or None,
             documento_id=documento_id,
             etapa=valores.get("Etapa") or None,
-            tramite=valores.get("Támite") or None,
-            descripcion_tramite=valores.get("Desc. Támite") or None,
-            fecha_tramite=valores.get("Fec. Támite") or None,
+            tramite=valores.get("Trámite") or valores.get("Támite") or None,
+            descripcion_tramite=valores.get("Desc. Trámite") or valores.get("Desc. Támite") or None,
+            fecha_tramite=valores.get("Fec. Trámite") or valores.get("Fec. Támite") or None,
             foja=foja_raw or None,
             hash_contenido=h,
         )
