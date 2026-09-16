@@ -236,20 +236,23 @@ async def _persistir_docs_anexos_historia(
             delete(MovimientoHistoriaAnexo).where(MovimientoHistoriaAnexo.movimiento_id == mov.id)
         )
         for i, a in enumerate(anexos_popup, start=1):
+            v_anexo = a.get("valores") or {}
+            fecha_anexo = v_anexo.get("Fecha") or None
+            referencia_anexo = v_anexo.get("Referencia") or None
             doc = None
             if a.get("doc"):
                 doc = await _obtener_o_descargar_documento(
                     session, sesion_pjud, causa.id, cuaderno.id, "historia_anexo",
                     f"{clave_base}_anexo{i}", cuaderno.numero, a["doc"],
-                    referencia=a.get("referencia"), hash_padre=h,
+                    referencia=referencia_anexo, hash_padre=h,
                 )
             session.add(
                 MovimientoHistoriaAnexo(
                     movimiento_id=mov.id,
                     documento_id=doc.id if doc else None,
                     orden=i,
-                    fecha=a.get("fecha"),
-                    referencia=a.get("referencia"),
+                    fecha=fecha_anexo,
+                    referencia=referencia_anexo,
                 )
             )
     elif anexo_urls:
@@ -713,16 +716,19 @@ async def _sincronizar_piezas_exhorto(
         await session.flush()
 
         for i, a in enumerate(fila.get("anexos_popup") or [], start=1):
+            v_anexo = a.get("valores") or {}
+            fecha_anexo = v_anexo.get("Fecha") or None
+            referencia_anexo = v_anexo.get("Referencia") or None
             doc = None
             if a.get("doc"):
                 doc = await _obtener_o_descargar_documento(
                     session, sesion_pjud, causa.id, None, "pieza_exhorto_anexo",
-                    f"{clave_base}_anexo{i}", None, a["doc"], referencia=a.get("referencia"), hash_padre=h,
+                    f"{clave_base}_anexo{i}", None, a["doc"], referencia=referencia_anexo, hash_padre=h,
                 )
             session.add(
                 PiezaExhortoAnexo(
                     pieza_id=pieza.id, documento_id=doc.id if doc else None, orden=i,
-                    fecha=a.get("fecha"), referencia=a.get("referencia"),
+                    fecha=fecha_anexo, referencia=referencia_anexo,
                 )
             )
         await session.commit()
