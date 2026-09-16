@@ -152,7 +152,7 @@ async def construir_causa_detalle(session: AsyncSession, causa: CausaFamilia) ->
         await session.execute(
             select(AnexoCausaFamilia)
             .where(AnexoCausaFamilia.causa_familia_id == causa.id)
-            .order_by(AnexoCausaFamilia.id)
+            .order_by(AnexoCausaFamilia.target.asc().nulls_last())
         )
     ).scalars().all()
     anexos = [

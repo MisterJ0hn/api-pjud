@@ -17,6 +17,9 @@ class AnexoCausa(Base):
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos.id"), nullable=True)
     fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
     referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Atributo `target` del `<form name="formAnex" ... target="N">` del popup "Anexo de
+    # la Causa": orden real de PJUD para esta lista (ver scraper JS_EXTRAER_FILAS_CON_ENLACES).
+    target: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (UniqueConstraint("causa_id", "referencia", "fecha", name="uq_anexos_causa_ref_fecha"),)
 

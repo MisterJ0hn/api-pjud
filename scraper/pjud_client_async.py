@@ -111,7 +111,10 @@ JS_SELECCIONAR_FILA_RIT = """(args) => {
 
 # Extrae, por cada tabla, sus headers y sus filas -- cada fila trae tanto el texto de
 # cada celda (`valores`) como los enlaces/descargas resueltos DENTRO de esa celda
-# especifica (`enlaces`).
+# especifica (`enlaces`). `targets` guarda el atributo `target` de los forms GET (p. ej.
+# `<form name="formAnex" ... target="3">` en el popup "Anexo de la Causa"): es el unico
+# indicador de orden real de PJUD para esa lista, mas confiable que el orden del DOM o
+# la clave natural referencia+fecha (que se puede repetir).
 JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
     const headerCells = t.querySelectorAll('thead th');
     const headers = (headerCells.length ? Array.from(headerCells) : Array.from(t.querySelectorAll('tr:first-child th')))
@@ -124,6 +127,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
         const enlaces = {};
         const posts = {};
         const popups = {};
+        const targets = {};
         celdas.forEach((td, i) => {
             const header = headers[i] || ('col' + i);
             valores[header] = td.textContent.trim();
@@ -137,6 +141,8 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
                     const url = new URL(action, location.href);
                     url.searchParams.set(input.name, input.value);
                     urls.push(url.toString());
+                    const target = form.getAttribute('target');
+                    if (target) (targets[header] = targets[header] || []).push(target);
                 } else {
                     // Form POST (p. ej. docFamiliaSii.php): el documento se pide con el
                     // JWT en el body. Se guarda aparte para descargar_post_bytes().
@@ -160,7 +166,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
             });
             if (urls.length) enlaces[header] = urls;
         });
-        return {valores, enlaces, posts, popups};
+        return {valores, enlaces, posts, popups, targets};
     }).filter(f => f !== null);
     return {headers, filas};
 })"""

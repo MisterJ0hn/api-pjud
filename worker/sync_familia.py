@@ -35,7 +35,7 @@ from api.db.models.familia import (
 )
 from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionFamiliaPrivada
 from worker.idempotencia import extension_por_content_type, hash_fila, ruta_documento, slug
-from worker.sync_civil import _archivo_en_disco, _normalizar, _parsear_folio
+from worker.sync_civil import _archivo_en_disco, _normalizar, _parsear_folio, _parsear_target
 
 logger = logging.getLogger("pjud.worker.sync_familia")
 
@@ -643,6 +643,7 @@ async def sincronizar_causa_familia(
         for sub in anexos_sub.get("filas", []):
             v = sub["valores"]
             folio, referencia, fecha = _campo(v, "Folio"), _campo(v, "Referencia"), _campo(v, "Fecha")
+            target = _parsear_target(sub.get("targets"), "Doc.")
             existente = (
                 await session.execute(
                     select(AnexoCausaFamilia).where(
@@ -654,8 +655,15 @@ async def sincronizar_causa_familia(
             ).scalar_one_or_none()
             urls = sub.get("enlaces", {}).get("Doc.") or []
             if existente is not None:
+                cambiado = False
                 if folio and existente.folio != folio:
                     existente.folio = folio
+                    cambiado = True
+                # Anexo ya registrado antes de que se scrapeara `target`: se completa
+                # aunque el resto no haya cambiado.
+                if target is not None and existente.target != target:
+                    existente.target = target
+                    cambiado = True
                 if urls and not await _documento_en_disco(session, existente.documento_id):
                     doc = await _obtener_o_descargar_doc(
                         session, sesion_pjud, causa.id, "anexo_causa", f"anexo_{slug(referencia)}",
@@ -663,7 +671,9 @@ async def sincronizar_causa_familia(
                     )
                     if doc is not None and existente.documento_id != doc.id:
                         existente.documento_id = doc.id
-                await session.commit()
+                    cambiado = True
+                if cambiado:
+                    await session.commit()
                 continue
             hubo_cambios = True
             documento_id = None
@@ -676,7 +686,7 @@ async def sincronizar_causa_familia(
             session.add(
                 AnexoCausaFamilia(
                     causa_familia_id=causa.id, documento_id=documento_id, folio=folio, fecha=fecha,
-                    referencia=referencia,
+                    referencia=referencia, target=target,
                 )
             )
             await session.commit()

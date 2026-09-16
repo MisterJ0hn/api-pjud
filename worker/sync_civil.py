@@ -82,6 +82,17 @@ def _parsear_folio(folio_raw: str) -> tuple[str, int | None, bool] | None:
     return None
 
 
+def _parsear_target(targets: dict | None, columna: str) -> int | None:
+    """Atributo `target` (entero) del `<form>` de la columna dada, si el scraper lo
+    capturo (ver `JS_EXTRAER_FILAS_CON_ENLACES`). Usado para ordenar "Anexo de la
+    Causa" en el orden real de PJUD en vez de la clave natural referencia+fecha."""
+    valores = (targets or {}).get(columna) or []
+    if not valores:
+        return None
+    crudo = valores[0].strip()
+    return int(crudo) if crudo.isdigit() else None
+
+
 def _normalizar(texto: str) -> str:
     sin_tildes = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii")
     return sin_tildes.strip().lower()
@@ -855,6 +866,7 @@ async def sincronizar_causa(
     for sub in cabecera.get("submodales", {}).get("Anexos de la causa", {}).get("filas", []):
         v = sub["valores"]
         referencia, fecha = v.get("Referencia"), v.get("Fecha")
+        target = _parsear_target(sub.get("targets"), "Doc.")
         existente = (
             await session.execute(
                 select(AnexoCausa).where(AnexoCausa.causa_id == causa.id, AnexoCausa.referencia == referencia, AnexoCausa.fecha == fecha)
@@ -862,7 +874,12 @@ async def sincronizar_causa(
         ).scalar_one_or_none()
         urls = sub.get("enlaces", {}).get("Doc.") or []
         if existente is not None:
-            # Anexo ya registrado: solo se revisa que su documento siga en disco.
+            cambiado = False
+            # Anexo ya registrado antes de que se scrapeara `target` (o con el bug de
+            # extraccion viejo): se completa aunque el resto no haya cambiado.
+            if target is not None and existente.target != target:
+                existente.target = target
+                cambiado = True
             if urls and not await _documento_en_disco(session, existente.documento_id):
                 logger.info("Anexo de causa '%s': documento faltante en disco, se re-descarga", referencia)
                 doc = await _obtener_o_descargar_documento(
@@ -871,6 +888,8 @@ async def sincronizar_causa(
                 )
                 if doc is not None and existente.documento_id != doc.id:
                     existente.documento_id = doc.id
+                cambiado = True
+            if cambiado:
                 await session.commit()
             continue
         hubo_cambios = True
@@ -880,7 +899,7 @@ async def sincronizar_causa(
                 session, sesion_pjud, causa.id, None, "anexo_causa", f"anexo_{slug(referencia)}", None, urls[0], referencia=referencia
             )
             documento_id = doc.id if doc else None
-        session.add(AnexoCausa(causa_id=causa.id, documento_id=documento_id, fecha=fecha, referencia=referencia))
+        session.add(AnexoCausa(causa_id=causa.id, documento_id=documento_id, fecha=fecha, referencia=referencia, target=target))
         await session.commit()
 
     for sub in cabecera.get("submodales", {}).get("Información notificaciones receptor", {}).get("filas", []):

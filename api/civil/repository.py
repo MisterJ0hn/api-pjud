@@ -171,7 +171,11 @@ async def construir_causa_detalle(session: AsyncSession, causa: Causa) -> CausaD
         docs_por_id[d.id] = d
 
     anexos_rows = (
-        await session.execute(select(AnexoCausa).where(AnexoCausa.causa_id == causa.id))
+        await session.execute(
+            select(AnexoCausa)
+            .where(AnexoCausa.causa_id == causa.id)
+            .order_by(AnexoCausa.target.asc().nulls_last())
+        )
     ).scalars().all()
     anexos = [
         AnexoCausaItem(

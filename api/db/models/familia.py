@@ -110,6 +110,9 @@ class AnexoCausaFamilia(Base):
     folio: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
     referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Atributo `target` del `<form name="formAnex" ... target="N">` del popup "Anexo de
+    # la Causa": orden real de PJUD para esta lista (ver scraper JS_EXTRAER_FILAS_CON_ENLACES).
+    target: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("causa_familia_id", "referencia", "fecha", name="uq_anexos_causa_familia_ref_fecha"),
