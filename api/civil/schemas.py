@@ -163,7 +163,9 @@ class NotificacionItem(BaseModel):
 
 class EscritoResolverItem(BaseModel):
     doc: str | None = None
-    anexo: str | None = None
+    # Popup propio `modalAnexoSolEscritoCivil` (Doc./Fecha/Referencia), confirmado en
+    # vivo en C-1964-2026 -- misma forma que el anexo de Historia.
+    anexo: list[HistoriaAnexoItem] = Field(default_factory=list)
     fecha_ingreso: str | None = None
     tipo_escrito: str | None = None
     solicitante: str | None = None

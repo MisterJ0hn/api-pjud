@@ -179,6 +179,27 @@ class EscritoResolver(Base):
     __table_args__ = (UniqueConstraint("cuaderno_id", "contenido_hash", name="uq_escritos_cuaderno_hash"),)
 
 
+class EscritoResolverAnexo(Base):
+    """Filas del popup "Anexo" de Escritos por Resolver (`modalAnexoSolEscritoCivil`,
+    columnas Doc./Fecha/Referencia -- mismo formato que `MovimientoHistoriaAnexo` y
+    `PiezaExhortoAnexo`, confirmado en vivo en C-1964-2026, 2026-09-16)."""
+
+    __tablename__ = "escritos_resolver_anexos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    escrito_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("escritos_resolver.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos.id"), nullable=True)
+    orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("escrito_id", "orden", name="uq_escritos_resolver_anexo_escrito_orden"),
+    )
+
+
 class Exhorto(Base):
     __tablename__ = "exhortos"
 

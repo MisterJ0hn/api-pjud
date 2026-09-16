@@ -34,6 +34,7 @@ from api.db.models.causas import Causa, Cuaderno
 from api.db.models.documentos import Documento
 from api.db.models.movimientos import (
     EscritoResolver,
+    EscritoResolverAnexo,
     Exhorto,
     ExhortoRolDestino,
     ExhortoRolDestinoItem,
@@ -367,16 +368,27 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
             select(EscritoResolver).where(EscritoResolver.cuaderno_id == cuaderno.id).order_by(EscritoResolver.id)
         )
     ).scalars().all()
-    escritos_resolver = [
-        EscritoResolverItem(
-            doc=doc_url(e.documento_id),
-            anexo="",
-            fecha_ingreso=e.fecha_ingreso,
-            tipo_escrito=e.tipo_escrito,
-            solicitante=e.solicitante,
+    escritos_resolver = []
+    for e in escrito_rows:
+        escrito_anexo_rows = (
+            await session.execute(
+                select(EscritoResolverAnexo)
+                .where(EscritoResolverAnexo.escrito_id == e.id)
+                .order_by(EscritoResolverAnexo.orden)
+            )
+        ).scalars().all()
+        escritos_resolver.append(
+            EscritoResolverItem(
+                doc=doc_url(e.documento_id),
+                anexo=[
+                    HistoriaAnexoItem(doc=doc_url(a.documento_id), fecha=a.fecha, referencia=a.referencia)
+                    for a in escrito_anexo_rows
+                ],
+                fecha_ingreso=e.fecha_ingreso,
+                tipo_escrito=e.tipo_escrito,
+                solicitante=e.solicitante,
+            )
         )
-        for e in escrito_rows
-    ]
 
     exhorto_rows = (
         await session.execute(select(Exhorto).where(Exhorto.cuaderno_id == cuaderno.id).order_by(Exhorto.id))

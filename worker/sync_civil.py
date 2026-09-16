@@ -30,6 +30,7 @@ from api.db.models.causas import Causa, Cuaderno
 from api.db.models.documentos import Documento
 from api.db.models.movimientos import (
     EscritoResolver,
+    EscritoResolverAnexo,
     Exhorto,
     ExhortoRolDestino,
     ExhortoRolDestinoItem,
@@ -606,16 +607,38 @@ async def _sincronizar_escritos_resolver(
             )
             documento_id = doc.id if doc else None
 
-        session.add(
-            EscritoResolver(
-                cuaderno_id=cuaderno.id,
-                documento_id=documento_id,
-                fecha_ingreso=valores.get("Fecha de Ingreso"),
-                tipo_escrito=valores.get("Tipo Escrito"),
-                solicitante=valores.get("Solicitante"),
-                contenido_hash=h,
-            )
+        escrito = EscritoResolver(
+            cuaderno_id=cuaderno.id,
+            documento_id=documento_id,
+            fecha_ingreso=valores.get("Fecha de Ingreso"),
+            tipo_escrito=valores.get("Tipo Escrito"),
+            solicitante=valores.get("Solicitante"),
+            contenido_hash=h,
         )
+        session.add(escrito)
+        await session.flush()
+
+        # Anexo del escrito: popup propio `modalAnexoSolEscritoCivil` (Doc./Fecha/
+        # Referencia), confirmado en vivo en C-1964-2026 -- ver [[causas-privadas-civil]].
+        for i, a in enumerate(fila.get("anexos_popup") or [], start=1):
+            v_anexo = a.get("valores") or {}
+            fecha_anexo = v_anexo.get("Fecha") or None
+            referencia_anexo = v_anexo.get("Referencia") or None
+            doc_anexo = None
+            if a.get("doc"):
+                doc_anexo = await _obtener_o_descargar_documento(
+                    session, sesion_pjud, causa.id, cuaderno.id, "escrito_resolver_anexo",
+                    f"{clave}_anexo{i}", cuaderno.numero, a["doc"], referencia=referencia_anexo, hash_padre=h,
+                )
+            session.add(
+                EscritoResolverAnexo(
+                    escrito_id=escrito.id,
+                    documento_id=doc_anexo.id if doc_anexo else None,
+                    orden=i,
+                    fecha=fecha_anexo,
+                    referencia=referencia_anexo,
+                )
+            )
         await session.commit()
     return hubo_cambios
 

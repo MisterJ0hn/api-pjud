@@ -276,7 +276,20 @@ Response 200:
     "escritos_resolver":[
         {
             "doc":"https://api-pjud.temposoft.cl/public/historia_escrito1_.pdf",
-            "anexo":"",
+            # actualizacion 16-09-2026, causa C-1964-2026 tribunal 4 ° Juzgado de Letras Civil de Antofagasta encontramos datos en anexo. generar el scrapping a estos datos . Puede que se repitan y el orden en que los dejas, debe ser el mismo orden que se encuentra en pjud.
+            "anexo":[
+                {
+                    "doc":"https://api-pjud.temposoft.cl/public/historia_escrito1_anexo1_.pdf",
+                    "fecha":"15/09/2026",
+                    "referencia":"oficio"
+                },
+                {
+                    "doc":"https://api-pjud.temposoft.cl/public/historia_escrito1_anexo2_.pdf",
+                    "fecha":"15/09/2026",
+                    "referencia":"oficio"
+                }
+            ],
+             # fin actualizacion 16-09-2026,
             "fecha_ingreso":"18/08/2026",
             "tipo_escrito": "Curso progresivo a los autos",
             "solicitante": "Demandante"

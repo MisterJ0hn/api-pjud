@@ -262,9 +262,11 @@ class _PjudModalScraper:
     # extraccion (lo setea el worker por job; ver worker/main.py).
     _progreso = None
     # Ids de los popups que puede abrir la columna "Anexo(s)" de Historia/Movimientos.
-    # Civil: `modalAnexoSolicitudCivil`. Familia: `modalAnexoEscritoFamilia` (Anexo del
-    # Escrito, GET) y `modalSIIFamilia` (Documentos SII, POST).
-    MODALES_ANEXO_HISTORIA = ("modalAnexoSolicitudCivil",)
+    # Civil: `modalAnexoSolicitudCivil` (Historia/Piezas Exhorto), `modalAnexoSolEscritoCivil`
+    # (Escritos por Resolver, confirmado en vivo en C-1964-2026 -- 2026-09-16). Familia:
+    # `modalAnexoEscritoFamilia` (Anexo del Escrito, GET) y `modalSIIFamilia` (Documentos
+    # SII, POST).
+    MODALES_ANEXO_HISTORIA = ("modalAnexoSolicitudCivil", "modalAnexoSolEscritoCivil")
     # Prefijos del nombre de la pestana que se trata como "Historia" (dispara la
     # extraccion de anexos por popup). Familia la llama "Movimientos".
     PREFIJOS_HISTORIA = ("historia",)
@@ -274,8 +276,9 @@ class _PjudModalScraper:
     MODAL_GEOREFERENCIA: str | None = "modalGeoReferenciaCivil"
     # Prefijos de pestanas, fuera de Historia/Movimientos, cuya columna "Anexo" tambien
     # abre un popup de `MODALES_ANEXO_HISTORIA` (misma extraccion generica). Civil:
-    # "Piezas Exhorto" usa el mismo modalAnexoSolicitudCivil que Historia.
-    PREFIJOS_ANEXO_POPUP_EXTRA: tuple[str, ...] = ("piezas exhorto",)
+    # "Piezas Exhorto" usa el mismo modalAnexoSolicitudCivil que Historia; "Escritos por
+    # Resolver" usa su propio modalAnexoSolEscritoCivil (mismas columnas Fecha/Referencia).
+    PREFIJOS_ANEXO_POPUP_EXTRA: tuple[str, ...] = ("piezas exhorto", "escritos por resolver")
 
     async def _reportar(self, texto: str) -> None:
         if self._progreso is None:
