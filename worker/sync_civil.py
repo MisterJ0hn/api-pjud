@@ -323,16 +323,19 @@ async def _folio_docs_completos(
     if len(doc_ids) != n_docs_esperado or any(d is None for d in doc_ids):
         return False
 
-    anexo_doc_ids = (
+    anexos = (
         await session.execute(
-            select(MovimientoHistoriaAnexo.documento_id).where(
-                MovimientoHistoriaAnexo.movimiento_id == mov_id,
-                MovimientoHistoriaAnexo.documento_id.is_not(None),
-            )
+            select(MovimientoHistoriaAnexo.documento_id, MovimientoHistoriaAnexo.fecha, MovimientoHistoriaAnexo.referencia)
+            .where(MovimientoHistoriaAnexo.movimiento_id == mov_id)
         )
-    ).scalars().all()
+    ).all()
+    # Anexo que vino del popup (tiene doc) pero se guardo sin fecha/referencia: bug de
+    # extraccion viejo (ver [[causas-privadas-civil]], 2026-09-16) -- se fuerza a
+    # recompletar aunque el archivo ya este en disco.
+    if any(documento_id is not None and fecha is None and referencia is None for documento_id, fecha, referencia in anexos):
+        return False
 
-    ids = [d for d in [*doc_ids, *anexo_doc_ids] if d is not None]
+    ids = [d for d, _, _ in anexos if d is not None] + [d for d in doc_ids if d is not None]
     if not ids:
         return True
     docs = (
