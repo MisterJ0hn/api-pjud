@@ -133,16 +133,22 @@ Response 200:
                 "estado":"Resuelta"
             }
         ],
+        # Actualizacion 16-09-2026, los datos de estado_proceso y etapa , cambian por cuaderno.
         "cuadernos":[
             {
                 "id":1,
-                "nombre":"1 - principal"
+                "nombre":"1 - principal",
+                "estado_proceso": "Tramitación", #Estado Proc.
+                "etapa":"1 Notificación demanda y su proveído", #Etapa
             },
             {
                 "id":2,
-                "nombre":"2 - Apremio Ejecutivo Obligación de Dar"
+                "nombre":"2 - Apremio Ejecutivo Obligación de Dar",
+                "estado_proceso": "Tramitación", #Estado Proc.
+                "etapa":"1 Notificación demanda y su proveído", #Etapa
             }
         ]
+        # fin Actualizacion 16-09-2026
         
     }
 

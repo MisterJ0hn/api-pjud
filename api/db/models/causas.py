@@ -65,6 +65,14 @@ class Cuaderno(Base):
     )
     numero: Mapped[int] = mapped_column(Integer, nullable=False)
     nombre: Mapped[str] = mapped_column(String(300), nullable=False)
+    # "Estado Proc."/"Etapa" de la cabecera cambian segun el cuaderno seleccionado en el
+    # modal de PJUD (confirmado en vivo en C-1964-2026, 2026-09-16: cuaderno "Principal"
+    # en "Tramitación"/"1 Tramitación Liquidación", cuaderno "Administración Concursal"
+    # en "Sin tramitación"/"0 Inicio tramitación") -- no son un valor unico por causa
+    # como se asumio originalmente (`Causa.estado_proceso`/`Causa.etapa`, que se quedan
+    # con el snapshot del cuaderno que estaba activo al abrir el modal).
+    estado_proceso: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    etapa: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     causa: Mapped["Causa"] = relationship(back_populates="cuadernos")
 

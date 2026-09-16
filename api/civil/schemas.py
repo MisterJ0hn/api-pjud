@@ -50,6 +50,10 @@ class InformacionReceptorItem(BaseModel):
 class CuadernoItem(BaseModel):
     id: int
     nombre: str
+    # "Estado Proc."/"Etapa" cambian segun el cuaderno seleccionado en PJUD, no son un
+    # valor unico por causa -- ver [[causas-privadas-civil]].
+    estado_proceso: str | None = None
+    etapa: str | None = None
 
 
 class CausaOrigenItem(BaseModel):

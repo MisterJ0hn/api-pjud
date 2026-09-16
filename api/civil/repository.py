@@ -205,7 +205,10 @@ async def construir_causa_detalle(session: AsyncSession, causa: Causa) -> CausaD
     cuadernos_rows = (
         await session.execute(select(Cuaderno).where(Cuaderno.causa_id == causa.id).order_by(Cuaderno.numero))
     ).scalars().all()
-    cuadernos = [CuadernoItem(id=c.numero, nombre=c.nombre) for c in cuadernos_rows]
+    cuadernos = [
+        CuadernoItem(id=c.numero, nombre=c.nombre, estado_proceso=c.estado_proceso, etapa=c.etapa)
+        for c in cuadernos_rows
+    ]
 
     # `estado_sync` en BD tiene un cuarto valor ("Pendiente", antes de que el worker
     # tome el job) que hacia afuera se expone igual que "Sincronizando" -- para el

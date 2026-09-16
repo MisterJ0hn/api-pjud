@@ -723,11 +723,32 @@ class _PjudModalScraper:
                         continue
                     await page.wait_for_timeout(900)
                 nombre_limpio = re.sub(r"^\d+\s*-\s*", "", etiqueta).strip() or etiqueta
+                # "Estado Proc."/"Etapa" cambian con el cuaderno seleccionado (confirmado
+                # en vivo en C-1964-2026, 2026-09-16) -- se releen de la cabecera despues
+                # de cada cambio, no del snapshot inicial (`campos`, que solo vale para el
+                # cuaderno que estaba activo al abrir el modal).
+                campos_cuaderno = (
+                    (await page.evaluate(JS_EXTRAER_CABECERA, modal_id)).get("campos", {})
+                    if len(etiquetas) > 1
+                    else campos
+                )
                 secciones = await self._extraer_cuaderno_actual(modal_id, nombre_limpio)
-                cuadernos.append({"numero": numero, "nombre": nombre_limpio, "secciones": secciones})
+                cuadernos.append({
+                    "numero": numero,
+                    "nombre": nombre_limpio,
+                    "estado_proceso": campos_cuaderno.get("Estado Proc."),
+                    "etapa": campos_cuaderno.get("Etapa"),
+                    "secciones": secciones,
+                })
         else:
             secciones = await self._extraer_cuaderno_actual(modal_id, "Principal")
-            cuadernos.append({"numero": 1, "nombre": "Principal", "secciones": secciones})
+            cuadernos.append({
+                "numero": 1,
+                "nombre": "Principal",
+                "estado_proceso": campos.get("Estado Proc."),
+                "etapa": campos.get("Etapa"),
+                "secciones": secciones,
+            })
 
         await page.evaluate(JS_CERRAR_MODAL, modal_id)
         await page.wait_for_timeout(300)

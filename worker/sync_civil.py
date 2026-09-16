@@ -897,6 +897,10 @@ async def sincronizar_causa(
             session.add(cuaderno)
         else:
             cuaderno.nombre = c["nombre"]
+        # "Estado Proc."/"Etapa" son por cuaderno, no por causa -- ver [[causas-privadas-civil]]
+        # (confirmado en vivo en C-1964-2026, 2026-09-16).
+        cuaderno.estado_proceso = c.get("estado_proceso") or cuaderno.estado_proceso
+        cuaderno.etapa = c.get("etapa") or cuaderno.etapa
         await session.commit()
         await session.refresh(cuaderno)
 
