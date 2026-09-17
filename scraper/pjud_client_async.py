@@ -398,7 +398,13 @@ class _PjudModalScraper:
                 ct = res.get("contentType") or ""
                 if self._validar_documento(ct, cuerpo, url):
                     return ct.split(";")[0].strip().lower() or "application/octet-stream", cuerpo
-                return None
+                # Contenido invalido via fetch (p. ej. la pagina "Request Rejected" de
+                # un WAF, servida con HTTP 200 -- confirmado en vivo 2026-09-18 en el
+                # endpoint de audio de Laboral, audioByPass.php): antes se abandonaba
+                # aca; ahora se prueba igual el fallback de abajo, que pega con la
+                # sesion "pelada" (APIRequestContext) en vez del fetch dentro de la
+                # pagina y puede evadir esa regla puntual del WAF.
+                logger.info("fetch de %s no devolvio un documento valido; se intenta el fallback", url)
         elif res and res.get("error"):
             logger.warning("fetch de %s fallo en la pagina: %s", url, res["error"])
 

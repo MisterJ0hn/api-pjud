@@ -19,6 +19,7 @@ Politica de persistencia (igual que familia):
   cada sync (tablas chicas; `contenido_hash` deduplica filas repetidas por PJUD).
 """
 
+import asyncio
 import logging
 import re
 
@@ -55,6 +56,11 @@ CATEGORIAS_CABECERA = {
     "ebook": "ebook",
 }
 
+# Pausa entre descargas sucesivas de audio (ver comentario en el bucle de audios): el
+# WAF de `/audio/audioByPass.php` rechaza todo si se piden muchos archivos seguidos sin
+# pausa. No aplica al resto de descargas (PDFs), que no mostraron este problema.
+PAUSA_ENTRE_AUDIOS_S = 2.5
+
 
 def _campo(campos: dict, *claves: str) -> str | None:
     for k in claves:
@@ -70,7 +76,9 @@ def _es_seccion(nombre: str, *prefijos: str) -> bool:
 
 
 _RE_ARCHIVO_AUDIO = re.compile(r"\.(mp3|wav|wma|m4a|ogg)\b", re.IGNORECASE)
-_RE_FECHA = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+# Confirmado en vivo (2026-09-17, causa O-692-2019): PJUD usa "-" como separador en
+# este popup ("27-03-2020"), no "/" como en el resto del sitio.
+_RE_FECHA = re.compile(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$")
 
 
 def _fila_audio_fecha_referencia(v: dict) -> tuple[str | None, str | None]:
@@ -772,10 +780,23 @@ async def sincronizar_causa_laboral(
     audio_sub = next((v for k, v in submodales.items() if _es_seccion(k, "listado de archivos de audio")), None)
     if audio_sub:
         await _rep("Guardando audios de audiencia")
-        for i, sub in enumerate(audio_sub.get("filas", []), start=1):
+        filas_audio = audio_sub.get("filas", [])
+        for i, sub in enumerate(filas_audio, start=1):
+            if i > 1:
+                # Confirmado en vivo (2026-09-18, O-692-2019): pedir los audios uno
+                # detras de otro sin pausa (40 archivos en ~10s) hace que el WAF de
+                # `/audio/audioByPass.php` rechace TODAS las descargas (pagina "Request
+                # Rejected" con HTTP 200, tanto via fetch como via el fallback de
+                # `descargar_bytes`). Los PDFs normales no tienen este problema; el
+                # audio si -- se pacea solo este bucle.
+                await asyncio.sleep(PAUSA_ENTRE_AUDIOS_S)
             v = sub["valores"]
-            logger.info("Audio de audiencia %s, fila cruda del popup: %r", i, v)
-            numero_raw = _campo(v, "Número", "Numero", "N°")
+            if i == 1:
+                logger.info(
+                    "Audio de audiencia 1, fila cruda completa del popup: valores=%r enlaces=%r posts=%r",
+                    v, sub.get("enlaces"), sub.get("posts"),
+                )
+            numero_raw = _campo(v, "Número", "Numero", "N°", "Nro")
             numero = int(numero_raw) if numero_raw and numero_raw.strip().isdigit() else i
             fecha, referencia = _fila_audio_fecha_referencia(v)
             existente = (
@@ -785,7 +806,18 @@ async def sincronizar_causa_laboral(
                     )
                 )
             ).scalar_one_or_none()
-            urls = (sub.get("enlaces", {}).get("Audio") or sub.get("enlaces", {}).get("Doc.") or [])
+            # CONFIRMADO en vivo (2026-09-17, O-692-2019): las columnas reales son
+            # Nro/Descargar/Audio/Fecha -- "Audio" trae la fecha como texto y "Fecha"
+            # trae el nombre de archivo (ver `_fila_audio_fecha_referencia`); el enlace
+            # de descarga (`audioByPass.php?action=download&x=<JWT>`) vive en la celda
+            # "Nro" (sin texto propio), no en "Descargar" ni "Audio".
+            urls = (
+                sub.get("enlaces", {}).get("Nro")
+                or sub.get("enlaces", {}).get("Descargar")
+                or sub.get("enlaces", {}).get("Audio")
+                or sub.get("enlaces", {}).get("Doc.")
+                or []
+            )
             if existente is not None:
                 if urls and not await _documento_en_disco(session, existente.documento_id):
                     doc = await _obtener_o_descargar_doc(
