@@ -20,6 +20,7 @@ Politica de persistencia (igual que familia):
 """
 
 import logging
+import re
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -66,6 +67,37 @@ def _campo(campos: dict, *claves: str) -> str | None:
 def _es_seccion(nombre: str, *prefijos: str) -> bool:
     n = _normalizar(nombre)
     return any(n.startswith(p) for p in prefijos)
+
+
+_RE_ARCHIVO_AUDIO = re.compile(r"\.(mp3|wav|wma|m4a|ogg)\b", re.IGNORECASE)
+_RE_FECHA = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+
+
+def _fila_audio_fecha_referencia(v: dict) -> tuple[str | None, str | None]:
+    """(fecha, referencia) de una fila del popup "Listado de Archivos de Audios de
+    Audiencia". CONFIRMADO en vivo (2026-09-18, causa O-692-2019): el nombre de columna
+    no es confiable -- el popup real trajo el nombre de archivo del audio bajo la
+    celda que se habia asumido como "Fecha" (ver historial de este archivo). Se detecta
+    el contenido por forma (nombre de archivo de audio / fecha dd/mm/aaaa) en vez de
+    confiar en el nombre de columna, y se cae al nombre de columna solo si nada calza."""
+    referencia = fecha = None
+    for texto in v.values():
+        t = (texto or "").strip()
+        if not t:
+            continue
+        if referencia is None and _RE_ARCHIVO_AUDIO.search(t):
+            referencia = t
+        elif fecha is None and _RE_FECHA.match(t):
+            fecha = t
+    if referencia is None:
+        referencia = _campo(v, "Referencia", "Nombre", "Archivo")
+    if fecha is None:
+        candidato = _campo(v, "Fecha")
+        # No caer de vuelta en el mismo valor ya clasificado como `referencia` --
+        # confirmado en vivo que la columna "Fecha" del popup puede en realidad traer
+        # el nombre de archivo (ver docstring de esta funcion).
+        fecha = candidato if candidato != referencia else None
+    return fecha, referencia
 
 
 # --- Descarga de documentos (idempotente por clave_logica) --------------------
@@ -742,9 +774,10 @@ async def sincronizar_causa_laboral(
         await _rep("Guardando audios de audiencia")
         for i, sub in enumerate(audio_sub.get("filas", []), start=1):
             v = sub["valores"]
+            logger.info("Audio de audiencia %s, fila cruda del popup: %r", i, v)
             numero_raw = _campo(v, "Número", "Numero", "N°")
             numero = int(numero_raw) if numero_raw and numero_raw.strip().isdigit() else i
-            fecha, referencia = _campo(v, "Fecha"), _campo(v, "Referencia")
+            fecha, referencia = _fila_audio_fecha_referencia(v)
             existente = (
                 await session.execute(
                     select(AudioLaboral).where(

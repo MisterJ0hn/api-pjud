@@ -131,9 +131,13 @@ class TextoDemandaLaboral(Base):
 
 class AudioLaboral(Base):
     """Filas del popup "Listado de Archivos de Audios de Audiencia"
-    (`modalListadoAudioLaboral`) de la cabecera. Sin ejemplo real con datos (no
-    verificado en vivo): columnas asumidas Número/Audio/Fecha/Referencia por analogia
-    con el resto de submodales de cabecera -- revisar contra una causa real con audio."""
+    (`modalListadoAudioLaboral`) de la cabecera. CONFIRMADO en vivo (2026-09-18, causa
+    O-692-2019): la celda que el header del popup muestra no trae "Fecha" como fecha
+    corta -- ahi viene el nombre de archivo del audio (largo, p. ej.
+    "1940222756-K-1352 -220317-00-01 - INDIVIDUALIZACIÓN (O-692-2019)(S2).mp3"), asi que
+    `fecha` se ensancho a 300 y el worker (`worker/sync_laboral.py`) ahora detecta el
+    nombre de archivo/fecha por heuristica de contenido en vez de por nombre de columna
+    asumido."""
 
     __tablename__ = "audios_laboral"
 
@@ -143,7 +147,7 @@ class AudioLaboral(Base):
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_laboral.id"), nullable=True)
     numero: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    fecha: Mapped[str | None] = mapped_column(String(300), nullable=True)
     referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
     orden: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
