@@ -17,6 +17,7 @@ from api.civil.cripto import descifrar
 from api.config import settings
 from api.db.models.causas import Causa
 from api.db.models.familia import CausaFamilia
+from api.db.models.laboral import CausaLaboral
 from api.db.models.sync_job import SyncJob
 from api.db.session_async import AsyncSessionLocal
 from api.logging_config import configurar_logger
@@ -25,10 +26,13 @@ from scraper.pjud_client_async import (
     LoginPrivadoError,
     PjudSessionAsync,
     PjudSessionFamiliaPrivada,
+    PjudSessionLaboralAsync,
+    PjudSessionLaboralPrivada,
     PjudSessionPrivada,
 )
 from worker.sync_civil import sincronizar_causa
 from worker.sync_familia import sincronizar_causa_familia
+from worker.sync_laboral import sincronizar_causa_laboral
 
 logger = configurar_logger("pjud.worker", "worker.log")
 
@@ -36,16 +40,33 @@ POLL_INTERVAL_S = 5
 PACING_ENTRE_JOBS_S = 7
 MAX_INTENTOS = 2
 
+# "civil" | "familia" | "laboral" -- que causa apunta el job (ver `SyncJob`, XOR de las
+# 3 columnas causa_id/causa_familia_id/causa_laboral_id).
+COMPETENCIA_MODELO = {"civil": Causa, "familia": CausaFamilia, "laboral": CausaLaboral}
 
-def _modelo_causa(es_familia: bool):
-    return CausaFamilia if es_familia else Causa
+
+def _competencia_job(job: SyncJob) -> str:
+    if job.causa_familia_id is not None:
+        return "familia"
+    if job.causa_laboral_id is not None:
+        return "laboral"
+    return "civil"
 
 
-async def _reportar_progreso(causa_id, es_familia: bool, texto: str) -> None:
+def _causa_id_job(job: SyncJob, competencia: str):
+    if competencia == "familia":
+        return job.causa_familia_id
+    if competencia == "laboral":
+        return job.causa_laboral_id
+    return job.causa_id
+
+
+async def _reportar_progreso(causa_id, competencia: str, texto: str) -> None:
     """Escribe el paso actual de la sincronizacion en `<causas>.sync_detalle`, en una
     sesion corta e independiente de la transaccion del job (solo toca esa columna).
-    Se expone en `consultar_civil` / `consultar_familia` como `detalle_estado`."""
-    modelo = _modelo_causa(es_familia)
+    Se expone en `consultar_civil` / `consultar_familia` / `consultar_laboral` como
+    `detalle_estado`."""
+    modelo = COMPETENCIA_MODELO[competencia]
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(update(modelo).where(modelo.id == causa_id).values(sync_detalle=texto))
@@ -68,10 +89,8 @@ async def _barrer_jobs_huerfanos() -> None:
             job.error_mensaje = "Job huerfano: worker reiniciado a medio proceso"
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)
-            if job.causa_familia_id is not None:
-                causa = await session.get(CausaFamilia, job.causa_familia_id)
-            else:
-                causa = await session.get(Causa, job.causa_id)
+            competencia = _competencia_job(job)
+            causa = await session.get(COMPETENCIA_MODELO[competencia], _causa_id_job(job, competencia))
             if causa is not None and causa.estado_sync == "Sincronizando":
                 causa.estado_sync = "Error"
                 causa.sync_detalle = None
@@ -111,18 +130,18 @@ def _limpiar_credenciales(job: SyncJob) -> None:
 async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
     async with AsyncSessionLocal() as session:
         job = await session.get(SyncJob, job_id)
-        es_familia = job.causa_familia_id is not None
-        modelo = _modelo_causa(es_familia)
-        causa_id = job.causa_familia_id if es_familia else job.causa_id
+        competencia = _competencia_job(job)
+        modelo = COMPETENCIA_MODELO[competencia]
+        causa_id = _causa_id_job(job, competencia)
         causa = await session.get(modelo, causa_id)
-        etiqueta = causa.rit if es_familia else causa.rol_formateado
+        etiqueta = causa.rol_formateado if competencia == "civil" else causa.rit
 
         privada = job.rut_cifrado is not None
         sesion_privada: PjudSessionPrivada | None = None
-        progreso = functools.partial(_reportar_progreso, causa_id, es_familia)
+        progreso = functools.partial(_reportar_progreso, causa_id, competencia)
 
         try:
-            if es_familia:
+            if competencia == "familia":
                 # Familia es siempre privada (el endpoint exige credenciales).
                 rut = descifrar(job.rut_cifrado)
                 clave = descifrar(job.clave_cifrada)
@@ -133,6 +152,30 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
                 await progreso("Iniciando sesion en la Oficina Judicial Virtual")
                 await sesion_privada.iniciar()
                 await sincronizar_causa_familia(session, sesion_privada, causa, progreso=progreso)
+            elif competencia == "laboral" and privada:
+                rut = descifrar(job.rut_cifrado)
+                clave = descifrar(job.clave_cifrada)
+                sesion_privada = PjudSessionLaboralPrivada(
+                    rut, clave, job.metodo_login or PjudSessionLaboralPrivada.METODO_CLAVE_PJUD,
+                    headless=settings.playwright_headless,
+                )
+                await progreso("Iniciando sesion en la Oficina Judicial Virtual")
+                await sesion_privada.iniciar()
+                await sincronizar_causa_laboral(session, sesion_privada, causa, privada=True, progreso=progreso)
+            elif competencia == "laboral":
+                # A diferencia de civil (que reusa el `sesion_pjud` compartido y de
+                # larga duracion de `run()`), la sync publica de laboral abre su propia
+                # sesion por job: `sesion_pjud` es un `PjudSessionAsync` de clase fija
+                # (ids de popup de civil) y los ids de Laboral son atributos de clase
+                # de `PjudSessionLaboralAsync`, asi que no se puede reusar la instancia
+                # sin cambiarle la clase en caliente. El costo (relanzar el navegador
+                # por job) es el mismo que ya paga toda sync privada.
+                sesion_laboral_publica = PjudSessionLaboralAsync(headless=settings.playwright_headless)
+                await sesion_laboral_publica.iniciar()
+                try:
+                    await sincronizar_causa_laboral(session, sesion_laboral_publica, causa, progreso=progreso)
+                finally:
+                    await sesion_laboral_publica.cerrar()
             elif privada:
                 rut = descifrar(job.rut_cifrado)
                 clave = descifrar(job.clave_cifrada)

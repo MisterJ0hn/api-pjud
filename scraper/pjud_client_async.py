@@ -128,9 +128,21 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
         const posts = {};
         const popups = {};
         const targets = {};
+        const iconos = {};
         celdas.forEach((td, i) => {
             const header = headers[i] || ('col' + i);
             valores[header] = td.textContent.trim();
+            // Columnas de estado por icono sin texto propio (p. ej. "Est." de
+            // Litigantes, "Doc. Demanda" del popup Texto Demanda de Laboral): el
+            // icono decide 1/0, `textContent` siempre viene vacio. fa-check(-square-o)
+            // = 1, fa-minus/fa-ban(-square-o) = 0; si no hay icono reconocible, se deja
+            // sin marcar (undefined) en vez de asumir 0.
+            const icono = td.querySelector('i[class*="fa-"]');
+            if (icono) {
+                const cls = icono.className;
+                if (/fa-check/.test(cls)) iconos[header] = true;
+                else if (/fa-minus|fa-ban/.test(cls)) iconos[header] = false;
+            }
             const urls = [];
             Array.from(td.querySelectorAll('form')).forEach(form => {
                 const input = form.querySelector('input[type="hidden"], input:not([type])') || form.querySelector('input');
@@ -169,7 +181,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
             });
             if (urls.length) enlaces[header] = urls;
         });
-        return {valores, enlaces, posts, popups, targets};
+        return {valores, enlaces, posts, popups, targets, iconos};
     }).filter(f => f !== null);
     return {headers, filas};
 })"""
@@ -1232,3 +1244,66 @@ class PjudSessionFamiliaPrivada(PjudSessionPrivada):
     # Popup de la columna "Georeferencia" de Movimientos: pestanas Mapas/Imagenes/Videos
     # (Videos aun sin ejemplos, no se scrapea). No verificado en vivo en este repo.
     MODAL_GEOREFERENCIA = "modalGeoReferenciaFamilia"
+
+
+class PjudSessionLaboralAsync(PjudSessionAsync):
+    """Igual que `PjudSessionAsync` (Consulta Unificada publica) pero con los ids de
+    popup propios de Laboral en vez de los de Civil (default de `_PjudModalScraper`).
+
+    Selectores confirmados contra `ejemplos/causa laboral/*.html` (Consulta Unificada
+    publica, causa O-200-2025 del Juzgado de Letras del Trabajo de Castro): modal de
+    detalle `modalDetalleLaboral`, pestanas Movimientos (`movimientoLab`) / Litigantes
+    (`litigantesLab`) / Notificaciones (`notificacionesLab`) / Diligencias
+    (`diligenciasLab`) / Liquidacion (`liquidacionLab`) / Materias (`materiasLab`) /
+    Escritos Pendientes (`EscPendLab`). La cabecera (`table.table-titulos`) ya la
+    extrae generico `JS_EXTRAER_CABECERA`: "Texto Demanda" y "Listado de Archivos de
+    Audios de Audiencia" caen solas en `cabecera.submodales` (icono con `<strong>` +
+    `data-toggle="modal"` sin texto propio), "Ebook" y "Certificado de Envío" en
+    `cabecera.descargas` (forms GET) -- ver `worker/sync_laboral.py`.
+    """
+
+    # `modalAnexoEscritoLaboral` ("Anexo escrito", columna "Anexos" de Movimientos) y
+    # `modalAnexoEscritoPend` (columna "Anexo" de Escritos Pendientes, mismo patron que
+    # "Escritos por Resolver" de Civil). Las columnas internas del popup no se vieron
+    # con datos reales (tabla vacia en los ejemplos disponibles); `_anexo_campos` en
+    # el worker asume Folio/Doc./Fecha/Nombre Documento/Observación por analogia con
+    # Familia -- revisar contra una causa real con anexos.
+    MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoLaboral", "modalAnexoEscritoPend")
+    PREFIJOS_HISTORIA = ("movimiento",)
+    MODAL_GEOREFERENCIA = "modalGeoReferenciaLaboral"
+    PREFIJOS_ANEXO_POPUP_EXTRA = ("escritos pendientes",)
+
+
+class PjudSessionLaboralPrivada(PjudSessionPrivada):
+    """Igual que `PjudSessionPrivada` pero para la pestana "Laboral" de Mis Causas.
+
+    A diferencia de Familia, Laboral NO es siempre privada (ver
+    `api/laboral/router.py`): este modo solo se usa cuando el request de
+    sincronizar_laboral trae rut/clave/metodo_login.
+
+    ADVERTENCIA: `TAB_COMPETENCIA` / `PANE_COMPETENCIA` / `CHECK_FILTROS` / `CAMPO_*` /
+    `BTN_BUSCAR` / `MODAL_DETALLE` son una ESTIMACION por analogia con los patrones de
+    nombres de Civil (`...MisCauCiv`, `tab3`) y Familia (`...MisCauFam`, `tab7`): no
+    hay ejemplo HTML de "Mis Causas" -> pestana Laboral en este repo (los ejemplos
+    disponibles son todos de la Consulta Unificada publica). NO VERIFICADO EN VIVO --
+    hay que confirmarlos contra una sesion real antes de usar el modo privado en
+    produccion. La extraccion del modal una vez abierto (`_extraer_detalle_de_modal`)
+    reusa el mismo DOM que la Consulta Unificada, asi que los ids de popups de
+    `PjudSessionLaboralAsync` (Anexos/Georeferencia) si estan confirmados.
+    """
+
+    NOMBRE_COMPETENCIA = "Laboral"
+    TAB_COMPETENCIA = "laboralTab"
+    PANE_COMPETENCIA = "tab4"
+    CHECK_FILTROS = "filtroMisCauLab"
+    CAMPO_TIPO = "tipoMisCauLab"
+    CAMPO_ROL = "rolMisCauLab"
+    CAMPO_ANIO = "anhoMisCauLab"
+    CAMPO_ESTADO = "estadoCausaMisCauLab"
+    BTN_BUSCAR = "btnConsultaMisCauLab"
+    MODAL_DETALLE = "modalDetalleMisCauLaboral"
+
+    MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoLaboral", "modalAnexoEscritoPend")
+    PREFIJOS_HISTORIA = ("movimiento",)
+    MODAL_GEOREFERENCIA = "modalGeoReferenciaLaboral"
+    PREFIJOS_ANEXO_POPUP_EXTRA = ("escritos pendientes",)

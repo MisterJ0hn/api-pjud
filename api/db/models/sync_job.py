@@ -18,13 +18,17 @@ class SyncJob(Base):
     __tablename__ = "sync_job"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # Un job apunta a UNA causa: `causa_id` (civil) o `causa_familia_id` (familia),
-    # nunca ambas ni ninguna (ver CheckConstraint). El worker despacha por cual venga.
+    # Un job apunta a UNA causa: `causa_id` (civil), `causa_familia_id` (familia) o
+    # `causa_laboral_id` (laboral), nunca mas de una ni ninguna (ver CheckConstraint).
+    # El worker despacha por cual venga.
     causa_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("causas.id", ondelete="CASCADE"), nullable=True, index=True
     )
     causa_familia_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("causas_familia.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    causa_laboral_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("causas_laboral.id", ondelete="CASCADE"), nullable=True, index=True
     )
     estado: Mapped[str] = mapped_column(String(15), nullable=False, default="pendiente")
     intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -44,7 +48,9 @@ class SyncJob(Base):
     __table_args__ = (
         CheckConstraint(f"estado IN {ESTADOS_JOB}", name="ck_sync_job_estado"),
         CheckConstraint(
-            "(causa_id IS NOT NULL) <> (causa_familia_id IS NOT NULL)",
+            "(CASE WHEN causa_id IS NOT NULL THEN 1 ELSE 0 END) "
+            "+ (CASE WHEN causa_familia_id IS NOT NULL THEN 1 ELSE 0 END) "
+            "+ (CASE WHEN causa_laboral_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
             name="ck_sync_job_una_causa",
         ),
     )

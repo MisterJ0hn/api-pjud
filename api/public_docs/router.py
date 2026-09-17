@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.db.models.causas import Causa, Cuaderno
 from api.db.models.documentos import Documento
 from api.db.models.familia import CausaFamilia, DocumentoFamilia
+from api.db.models.laboral import CausaLaboral, DocumentoLaboral
 from api.db.session_async import get_session
 
 router = APIRouter(prefix="/public", tags=["documentos"])
@@ -146,18 +147,84 @@ async def _resolver_y_servir_imagen_familia(session: AsyncSession, causa_id: str
     return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
 
 
-# Declarada ANTES de `documento_familia` (2 segmentos): esta tiene un segmento "img" de
-# mas, asi que no colisiona por estructura de ruta, pero se deja primero por legibilidad.
+async def _resolver_y_servir_laboral(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    if not nombre_con_ext.lower().endswith(".pdf"):
+        raise HTTPException(status_code=404, detail="No encontrado")
+    nombre_archivo = nombre_con_ext[: -len(".pdf")]
+
+    try:
+        cid = uuid.UUID(causa_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    causa = (await session.execute(select(CausaLaboral).where(CausaLaboral.id == cid))).scalar_one_or_none()
+    if causa is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoLaboral).where(
+                DocumentoLaboral.causa_laboral_id == causa.id,
+                DocumentoLaboral.nombre_archivo == nombre_archivo,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type="application/pdf", filename=nombre_con_ext)
+
+
+async def _resolver_y_servir_imagen_laboral(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    nombre, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_POR_EXTENSION.get(ext.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    try:
+        cid = uuid.UUID(causa_id)
+        documento_id = uuid.UUID(nombre)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoLaboral).where(
+                DocumentoLaboral.id == documento_id,
+                DocumentoLaboral.causa_laboral_id == cid,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
+
+
+# Declarada ANTES de `documento_familia` / `documento_laboral` (2 segmentos): estas
+# tienen un segmento "img" de mas, asi que no colisionan por estructura de ruta, pero
+# se dejan primero por legibilidad.
 @router.get("/familia/{causa_id}/img/{nombre_con_ext}")
 async def imagen_familia(causa_id: str, nombre_con_ext: str, session: AsyncSession = Depends(get_session)):
     return await _resolver_y_servir_imagen_familia(session, causa_id, nombre_con_ext)
 
 
-# Declarada ANTES de las rutas civiles de 2 segmentos para que `/public/familia/<uuid>/<name>`
-# no la agarre `documento_cuaderno` con causa_id="familia".
+@router.get("/laboral/{causa_id}/img/{nombre_con_ext}")
+async def imagen_laboral(causa_id: str, nombre_con_ext: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_imagen_laboral(session, causa_id, nombre_con_ext)
+
+
+# Declaradas ANTES de las rutas civiles de 2 segmentos para que `/public/familia/<uuid>/<name>`
+# / `/public/laboral/<uuid>/<name>` no las agarre `documento_cuaderno` con
+# causa_id="familia"/"laboral".
 @router.get("/familia/{causa_id}/{nombre_archivo}")
 async def documento_familia(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
     return await _resolver_y_servir_familia(session, causa_id, nombre_archivo)
+
+
+@router.get("/laboral/{causa_id}/{nombre_archivo}")
+async def documento_laboral(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_laboral(session, causa_id, nombre_archivo)
 
 
 @router.get("/{causa_id}/{nombre_archivo}")
