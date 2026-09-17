@@ -19,6 +19,11 @@ _MIME_POR_EXTENSION = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".gif": "image/gif",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".wma": "audio/x-ms-wma",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
 }
 
 
@@ -201,6 +206,32 @@ async def _resolver_y_servir_imagen_laboral(session: AsyncSession, causa_id: str
     return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
 
 
+async def _resolver_y_servir_audio_laboral(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    nombre, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_POR_EXTENSION.get(ext.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    try:
+        cid = uuid.UUID(causa_id)
+        documento_id = uuid.UUID(nombre)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoLaboral).where(
+                DocumentoLaboral.id == documento_id,
+                DocumentoLaboral.causa_laboral_id == cid,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
+
+
 # Declarada ANTES de `documento_familia` / `documento_laboral` (2 segmentos): estas
 # tienen un segmento "img" de mas, asi que no colisionan por estructura de ruta, pero
 # se dejan primero por legibilidad.
@@ -212,6 +243,11 @@ async def imagen_familia(causa_id: str, nombre_con_ext: str, session: AsyncSessi
 @router.get("/laboral/{causa_id}/img/{nombre_con_ext}")
 async def imagen_laboral(causa_id: str, nombre_con_ext: str, session: AsyncSession = Depends(get_session)):
     return await _resolver_y_servir_imagen_laboral(session, causa_id, nombre_con_ext)
+
+
+@router.get("/laboral/{causa_id}/audio/{nombre_con_ext}")
+async def audio_laboral(causa_id: str, nombre_con_ext: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_audio_laboral(session, causa_id, nombre_con_ext)
 
 
 # Declaradas ANTES de las rutas civiles de 2 segmentos para que `/public/familia/<uuid>/<name>`

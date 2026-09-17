@@ -38,7 +38,12 @@ from api.laboral.schemas import (
     NotificacionLaboralItem,
     TextoDemandaItem,
 )
-from api.laboral.urls import rit_formateado, url_publica_documento_laboral, url_publica_imagen_laboral
+from api.laboral.urls import (
+    rit_formateado,
+    url_publica_audio_laboral,
+    url_publica_documento_laboral,
+    url_publica_imagen_laboral,
+)
 from api.civil.schemas import GeoReferenciaImagenItem, GeoReferenciaItem, GeoReferenciaMapa
 
 CAMPO_ESTADO_SINCRONIZANDO = "Sincronizando"
@@ -158,6 +163,16 @@ async def construir_causa_detalle(session: AsyncSession, causa: CausaLaboral) ->
         doc = docs_por_id.get(documento_id)
         return url_publica_documento_laboral(causa.id, doc.nombre_archivo) if doc else None
 
+    def audio_url(documento_id) -> str | None:
+        # Los audios son mp3, no pdf -- `doc_url`/`url_publica_documento_laboral`
+        # fuerzan `.pdf` (correcto para el resto de documentos de Laboral, que si son
+        # pdf). Mismo esquema que las imagenes de Georref: por GUID + extension real.
+        doc = docs_por_id.get(documento_id)
+        if doc is None:
+            return None
+        _, ext = os.path.splitext(doc.ruta_archivo)
+        return url_publica_audio_laboral(causa.id, doc.id, ext)
+
     texto_demanda_rows = (
         await session.execute(
             select(TextoDemandaLaboral)
@@ -178,7 +193,7 @@ async def construir_causa_detalle(session: AsyncSession, causa: CausaLaboral) ->
         )
     ).scalars().all()
     audio_laboral = [
-        AudioItem(numero=a.numero, audio=doc_url(a.documento_id), fecha=a.fecha, referencia=a.referencia)
+        AudioItem(numero=a.numero, audio=audio_url(a.documento_id), fecha=a.fecha, referencia=a.referencia)
         for a in audio_rows
     ]
 

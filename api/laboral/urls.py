@@ -18,3 +18,11 @@ def url_publica_imagen_laboral(causa_laboral_id, documento_id, extension: str) -
     # id del Documento) en vez de por `nombre_archivo` como el resto de los docs.
     base = settings.public_base_url.rstrip("/")
     return f"{base}/public/laboral/{causa_laboral_id}/img/{documento_id}{extension}"
+
+
+def url_publica_audio_laboral(causa_laboral_id, documento_id, extension: str) -> str:
+    # Audios de audiencia (mp3, no pdf): mismo esquema que las imagenes de Georref --
+    # `url_publica_documento_laboral` no sirve porque fuerza `.pdf` (todo el resto de
+    # documentos de Laboral SI son pdf, asi que esa funcion no cambia).
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/public/laboral/{causa_laboral_id}/audio/{documento_id}{extension}"

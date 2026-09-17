@@ -218,8 +218,20 @@ async def _registrar_documento_desde_ruta_temporal(
     if not ruta_temporal or not os.path.isfile(ruta_temporal):
         logger.warning("Descarga por click de '%s': sin archivo temporal valido", clave_logica)
         return None
-    _, ext = os.path.splitext(nombre_sugerido or ruta_temporal)
-    ext = ext or ".bin"
+    # `nombre_sugerido` (Playwright `Download.suggested_filename`) vino vacio/sin
+    # extension en vivo (PJUD no manda Content-Disposition con nombre y la URL de
+    # descarga tampoco trae extension) -- `referencia` (el nombre de archivo real que
+    # ya detectamos en la fila, p. ej. "...fecha de juicio.mp3") es mas confiable para
+    # esto y se prueba primero. Ultimo fallback ".mp3": unico tipo de archivo conocido
+    # que usa esta descarga por click hasta ahora (audio de audiencia de Laboral).
+    ext = ""
+    for candidato in (referencia, nombre_sugerido):
+        if candidato:
+            _, ext_candidata = os.path.splitext(candidato)
+            if ext_candidata:
+                ext = ext_candidata
+                break
+    ext = ext or ".mp3"
 
     existente = (
         await session.execute(

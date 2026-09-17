@@ -1,8 +1,5 @@
 el tribunal es distinto al de civil, debemos scrapear antes todos los tribunales de laboral y luego puedo obtener desde el endpoint
-url : /tribunal
-{
-    "competencia": "laboral"
-}
+url : /tribunal?competencia=laboral
 
 
 el usuario se debe loguear con un metodo auth
