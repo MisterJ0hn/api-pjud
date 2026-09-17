@@ -298,6 +298,14 @@ class _PjudModalScraper:
     # "Exhortos" usa modalExhortoCivil en la columna "Rol Destino" (Doc./Fecha/Referencia/
     # Tramite).
     PREFIJOS_ANEXO_POPUP_EXTRA: tuple[str, ...] = ("piezas exhorto", "escritos por resolver", "exhortos")
+    # Ids de sub-modales de CABECERA (no de Historia/Movimientos) cuyas descargas deben
+    # dispararse con un click REAL de Playwright en vez de pedir la URL por fetch/HTTP
+    # -- ver `_procesar_submodal_con_descarga_click`. Confirmado en vivo (2026-09-18,
+    # Laboral): `audio/audioByPass.php` rechaza (pagina de WAF "Request Rejected", HTTP
+    # 200) cualquier pedido que no venga de una activacion real del usuario, aunque la
+    # sesion/cookies sean validas -- el link es un `<a href=... download="">`, que solo
+    # dispara la descarga nativa del navegador con un click de verdad.
+    MODALES_DESCARGA_CLICK: frozenset[str] = frozenset()
 
     async def _reportar(self, texto: str) -> None:
         if self._progreso is None:
@@ -479,6 +487,73 @@ class _PjudModalScraper:
         )
         await page.wait_for_timeout(300)
         return tablas[0] if tablas else {"headers": [], "filas": []}
+
+    async def _procesar_submodal_con_descarga_click(
+        self, modal_id: str, target: str, pausa_entre_clicks_ms: int = 2500
+    ) -> dict | None:
+        """Como `_procesar_submodal`, pero para popups en `MODALES_DESCARGA_CLICK`:
+        ademas de extraer las filas (igual que siempre, via `JS_EXTRAER_FILAS_CON_ENLACES`),
+        dispara un click REAL de Playwright sobre el `<a download>` de cada fila y
+        captura el archivo por el evento `download` nativo del navegador -- no por
+        fetch/APIRequestContext, que este popup rechaza aunque la sesion sea valida
+        (ver `MODALES_DESCARGA_CLICK`). Dispara los clicks con pausa (WAF sensible al
+        volumen, confirmado en vivo) ANTES de cerrar el popup.
+
+        Cada fila devuelta trae ademas `fila["descarga_click"] = {"ruta_temporal":str,
+        "nombre_sugerido": str|None} | None` (None si esa fila no tenia link o la
+        descarga fallo) -- el worker decide que hacer con el archivo temporal."""
+        page = self._page
+        if not target or not target.startswith("#"):
+            return None
+        sub_id = target[1:]
+        try:
+            await page.click(f'#{modal_id} a[href="{target}"]')
+        except Exception:
+            logger.warning("No se pudo abrir el sub-modal %s", target)
+            return None
+        await page.wait_for_timeout(1600)
+        if not await page.query_selector(f"#{sub_id}"):
+            logger.warning("Sub-modal %s no aparecio en el DOM", target)
+            return None
+
+        tablas = await self._extraer_filas_con_enlaces(f"#{sub_id}")
+        seccion = tablas[0] if tablas else {"headers": [], "filas": []}
+
+        filas_dom = page.locator(f"#{sub_id} table tr:has(td)")
+        total_dom = await filas_dom.count()
+        for idx, fila in enumerate(seccion.get("filas", [])):
+            fila["descarga_click"] = None
+            if idx >= total_dom:
+                continue
+            link = filas_dom.nth(idx).locator("a[download]")
+            if await link.count() == 0:
+                continue
+            if idx > 0:
+                await page.wait_for_timeout(pausa_entre_clicks_ms)
+            try:
+                async with page.expect_download(timeout=30000) as download_info:
+                    await link.first.click()
+                download = await download_info.value
+                ruta = await download.path()
+                if ruta:
+                    fila["descarga_click"] = {
+                        "ruta_temporal": ruta, "nombre_sugerido": download.suggested_filename,
+                    }
+                else:
+                    logger.warning("Descarga por click (fila %d de %s): sin archivo temporal", idx, target)
+            except Exception:
+                logger.exception("Error al descargar por click la fila %d de %s", idx, target)
+
+        await page.evaluate(
+            """(subId) => {
+                const modal = document.getElementById(subId);
+                const cerrar = modal.querySelector('.close, button.close, [data-dismiss="modal"]');
+                if (cerrar) cerrar.click();
+            }""",
+            sub_id,
+        )
+        await page.wait_for_timeout(300)
+        return seccion
 
     async def _extraer_cuaderno_actual(self, modal_id: str, cuaderno_nombre: str = "Principal") -> dict:
         page = self._page
@@ -703,7 +778,12 @@ class _PjudModalScraper:
         if cabecera_info.get("submodales"):
             await self._reportar("Obteniendo anexos de la causa")
         for sub in cabecera_info.get("submodales", []):
-            tabla = await self._procesar_submodal(modal_id, sub["target"])
+            target = sub["target"] or ""
+            sub_id = target[1:] if target.startswith("#") else None
+            if sub_id in self.MODALES_DESCARGA_CLICK:
+                tabla = await self._procesar_submodal_con_descarga_click(modal_id, target)
+            else:
+                tabla = await self._procesar_submodal(modal_id, target)
             if tabla is not None:
                 submodales[sub["label"]] = tabla
 
@@ -1278,6 +1358,7 @@ class PjudSessionLaboralAsync(PjudSessionAsync):
     PREFIJOS_HISTORIA = ("movimiento",)
     MODAL_GEOREFERENCIA = "modalGeoReferenciaLaboral"
     PREFIJOS_ANEXO_POPUP_EXTRA = ("escritos pendientes",)
+    MODALES_DESCARGA_CLICK = frozenset({"modalListadoAudioLaboral"})
 
 
 class PjudSessionLaboralPrivada(PjudSessionPrivada):
@@ -1313,3 +1394,4 @@ class PjudSessionLaboralPrivada(PjudSessionPrivada):
     PREFIJOS_HISTORIA = ("movimiento",)
     MODAL_GEOREFERENCIA = "modalGeoReferenciaLaboral"
     PREFIJOS_ANEXO_POPUP_EXTRA = ("escritos pendientes",)
+    MODALES_DESCARGA_CLICK = frozenset({"modalListadoAudioLaboral"})

@@ -21,7 +21,9 @@ Politica de persistencia (igual que familia):
 
 import asyncio
 import logging
+import os
 import re
+import shutil
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -196,6 +198,68 @@ async def _documento_en_disco(session: AsyncSession, documento_id) -> bool:
         await session.execute(select(DocumentoLaboral.ruta_archivo).where(DocumentoLaboral.id == documento_id))
     ).scalar_one_or_none()
     return _archivo_en_disco(ruta)
+
+
+async def _registrar_documento_desde_ruta_temporal(
+    session: AsyncSession,
+    causa_id,
+    categoria: str,
+    clave_logica: str,
+    ruta_temporal: str | None,
+    nombre_sugerido: str | None = None,
+    referencia: str | None = None,
+    hash_padre: str | None = None,
+) -> DocumentoLaboral | None:
+    """Como `_obtener_o_descargar_doc`, pero para archivos que Playwright ya bajo a un
+    temporal via un click real (ver `descarga_click` / `MODALES_DESCARGA_CLICK` en el
+    scraper) en vez de pedirlos por fetch/HTTP: copia el temporal a la ubicacion
+    idempotente de siempre y registra/actualiza el `DocumentoLaboral`. No re-verifica
+    idempotencia por si sola (el llamador ya decide si hace falta descargar)."""
+    if not ruta_temporal or not os.path.isfile(ruta_temporal):
+        logger.warning("Descarga por click de '%s': sin archivo temporal valido", clave_logica)
+        return None
+    _, ext = os.path.splitext(nombre_sugerido or ruta_temporal)
+    ext = ext or ".bin"
+
+    existente = (
+        await session.execute(
+            select(DocumentoLaboral).where(
+                DocumentoLaboral.causa_laboral_id == causa_id,
+                DocumentoLaboral.clave_logica == clave_logica,
+            )
+        )
+    ).scalar_one_or_none()
+    destino = ruta_documento(causa_id, clave_logica, None, ext)
+    shutil.copyfile(ruta_temporal, destino)
+
+    if existente is not None:
+        existente.ruta_archivo = destino
+        await session.flush()
+        return existente
+
+    documento = DocumentoLaboral(
+        causa_laboral_id=causa_id,
+        categoria=categoria,
+        clave_logica=clave_logica,
+        nombre_archivo=clave_logica,
+        ruta_archivo=destino,
+        hash_contenido_fila_padre=hash_padre,
+        referencia_origen=referencia,
+    )
+    session.add(documento)
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        return (
+            await session.execute(
+                select(DocumentoLaboral).where(
+                    DocumentoLaboral.causa_laboral_id == causa_id,
+                    DocumentoLaboral.clave_logica == clave_logica,
+                )
+            )
+        ).scalar_one_or_none()
+    return documento
 
 
 # --- Movimientos ---------------------------------------------------------------
@@ -806,11 +870,16 @@ async def sincronizar_causa_laboral(
                     )
                 )
             ).scalar_one_or_none()
-            # CONFIRMADO en vivo (2026-09-17, O-692-2019): las columnas reales son
+            # CONFIRMADO en vivo (2026-09-17/18, O-692-2019): las columnas reales son
             # Nro/Descargar/Audio/Fecha -- "Audio" trae la fecha como texto y "Fecha"
-            # trae el nombre de archivo (ver `_fila_audio_fecha_referencia`); el enlace
-            # de descarga (`audioByPass.php?action=download&x=<JWT>`) vive en la celda
-            # "Nro" (sin texto propio), no en "Descargar" ni "Audio".
+            # trae el nombre de archivo (ver `_fila_audio_fecha_referencia`). El link de
+            # descarga vive en la celda "Nro", PERO `audioByPass.php` rechaza (WAF,
+            # "Request Rejected" con HTTP 200) cualquier pedido por fetch/HTTP aunque la
+            # sesion sea valida -- el scraper ya lo descarga con un click REAL de
+            # Playwright durante la extraccion (`descarga_click`, ver
+            # `MODALES_DESCARGA_CLICK`); `urls` queda solo de fallback por si algun caso
+            # no trae `descarga_click` (p. ej. el link no tenia `download`).
+            descarga_click = sub.get("descarga_click")
             urls = (
                 sub.get("enlaces", {}).get("Nro")
                 or sub.get("enlaces", {}).get("Descargar")
@@ -818,25 +887,31 @@ async def sincronizar_causa_laboral(
                 or sub.get("enlaces", {}).get("Doc.")
                 or []
             )
-            if existente is not None:
-                if urls and not await _documento_en_disco(session, existente.documento_id):
-                    doc = await _obtener_o_descargar_doc(
+
+            async def _descargar_audio() -> DocumentoLaboral | None:
+                if descarga_click:
+                    return await _registrar_documento_desde_ruta_temporal(
+                        session, causa.id, "audio", f"audio_{i}", descarga_click.get("ruta_temporal"),
+                        nombre_sugerido=descarga_click.get("nombre_sugerido"), referencia=referencia,
+                    )
+                if urls:
+                    return await _obtener_o_descargar_doc(
                         session, sesion_pjud, causa.id, "audio", f"audio_{i}", urls[0], referencia=referencia,
                     )
+                return None
+
+            if existente is not None:
+                if (descarga_click or urls) and not await _documento_en_disco(session, existente.documento_id):
+                    doc = await _descargar_audio()
                     if doc is not None:
                         existente.documento_id = doc.id
                     await session.commit()
                 continue
             hubo_cambios = True
-            documento_id = None
-            if urls:
-                doc = await _obtener_o_descargar_doc(
-                    session, sesion_pjud, causa.id, "audio", f"audio_{i}", urls[0], referencia=referencia,
-                )
-                documento_id = doc.id if doc else None
+            doc = await _descargar_audio()
             session.add(
                 AudioLaboral(
-                    causa_laboral_id=causa.id, documento_id=documento_id, numero=numero,
+                    causa_laboral_id=causa.id, documento_id=doc.id if doc else None, numero=numero,
                     fecha=fecha, referencia=referencia, orden=i,
                 )
             )
