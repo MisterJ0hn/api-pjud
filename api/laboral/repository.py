@@ -143,9 +143,10 @@ async def encolar_sync_job(
 def _doc_ref(doc: DocumentoLaboral | None, causa_id) -> DocumentoRef | None:
     if doc is None:
         return None
+    _, ext = os.path.splitext(doc.ruta_archivo)
     return DocumentoRef(
         nombre_archivo=doc.nombre_archivo,
-        url=url_publica_documento_laboral(causa_id, doc.nombre_archivo),
+        url=url_publica_documento_laboral(causa_id, doc.nombre_archivo, ext or ".pdf"),
     )
 
 
@@ -161,7 +162,10 @@ async def construir_causa_detalle(session: AsyncSession, causa: CausaLaboral) ->
 
     def doc_url(documento_id) -> str | None:
         doc = docs_por_id.get(documento_id)
-        return url_publica_documento_laboral(causa.id, doc.nombre_archivo) if doc else None
+        if doc is None:
+            return None
+        _, ext = os.path.splitext(doc.ruta_archivo)
+        return url_publica_documento_laboral(causa.id, doc.nombre_archivo, ext or ".pdf")
 
     def audio_url(documento_id) -> str | None:
         # Los audios son mp3, no pdf -- `doc_url`/`url_publica_documento_laboral`
@@ -238,7 +242,10 @@ async def construir_movimientos(session: AsyncSession, causa: CausaLaboral) -> M
 
     def doc_url(documento_id) -> str | None:
         doc = docs_por_id.get(documento_id)
-        return url_publica_documento_laboral(causa.id, doc.nombre_archivo) if doc else None
+        if doc is None:
+            return None
+        _, ext = os.path.splitext(doc.ruta_archivo)
+        return url_publica_documento_laboral(causa.id, doc.nombre_archivo, ext or ".pdf")
 
     def imagen_url(documento_id) -> str | None:
         doc = docs_por_id.get(documento_id)

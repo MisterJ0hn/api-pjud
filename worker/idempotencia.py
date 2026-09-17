@@ -37,6 +37,12 @@ def ruta_documento(causa_id, clave_logica: str, cuaderno_numero: int | None, ext
 def extension_por_content_type(content_type: str) -> str:
     if "pdf" in content_type:
         return ".pdf"
+    # Word: PJUD mezcla .doc/.docx con .pdf en la misma columna "Doc." (confirmado en
+    # vivo en Laboral, 2026-09-18) -- sin esto, cualquier Word caia al `.bin` generico.
+    if "wordprocessingml" in content_type:
+        return ".docx"
+    if "msword" in content_type:
+        return ".doc"
     if "html" in content_type:
         return ".html"
     if "jpeg" in content_type or "jpg" in content_type:

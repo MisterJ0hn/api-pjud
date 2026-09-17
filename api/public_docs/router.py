@@ -26,6 +26,15 @@ _MIME_POR_EXTENSION = {
     ".ogg": "audio/ogg",
 }
 
+# Extensiones que puede traer la columna "Doc." de Laboral (Movimientos, Diligencias,
+# etc.): la mayoria son pdf, pero PJUD mezcla .doc/.docx en la misma columna --
+# confirmado en vivo 2026-09-18 (ver `extension_por_content_type`).
+_MIME_DOCUMENTOS_LABORAL = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
 
 async def _resolver_y_servir(
     session: AsyncSession, causa_id: str, nombre_con_ext: str, cuaderno_numero: int | None
@@ -153,9 +162,13 @@ async def _resolver_y_servir_imagen_familia(session: AsyncSession, causa_id: str
 
 
 async def _resolver_y_servir_laboral(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
-    if not nombre_con_ext.lower().endswith(".pdf"):
+    # A diferencia de civil/familia (donde todo documento generico ES pdf), Laboral
+    # mezcla .doc/.docx en la misma columna "Doc." -- confirmado en vivo 2026-09-18 --
+    # asi que aca no se puede asumir `.pdf` fijo como en `_resolver_y_servir_familia`.
+    nombre_archivo, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_DOCUMENTOS_LABORAL.get(ext.lower())
+    if media_type is None:
         raise HTTPException(status_code=404, detail="No encontrado")
-    nombre_archivo = nombre_con_ext[: -len(".pdf")]
 
     try:
         cid = uuid.UUID(causa_id)
@@ -177,7 +190,7 @@ async def _resolver_y_servir_laboral(session: AsyncSession, causa_id: str, nombr
     if documento is None:
         raise HTTPException(status_code=404, detail="No encontrado")
 
-    return FileResponse(documento.ruta_archivo, media_type="application/pdf", filename=nombre_con_ext)
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
 
 
 async def _resolver_y_servir_imagen_laboral(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
