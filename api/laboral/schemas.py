@@ -85,11 +85,9 @@ class MovimientoDocItem(BaseModel):
 
 
 class MovimientoAnexoItem(BaseModel):
-    folio: int | None = None
     doc: str | None = None
     fecha: str | None = None
-    nombre_documento: str | None = None
-    observacion: str | None = None
+    referencia: str | None = None
 
 
 class MovimientoLaboralItem(BaseModel):

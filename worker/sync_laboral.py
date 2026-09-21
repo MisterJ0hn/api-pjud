@@ -277,18 +277,15 @@ async def _registrar_documento_desde_ruta_temporal(
 # --- Movimientos ---------------------------------------------------------------
 
 
-def _anexo_campos(a: dict) -> tuple[int | None, str | None, str | None, str | None]:
-    """(folio, fecha, nombre_documento, observacion) de una fila del popup de anexo
-    (`modalAnexoEscritoLaboral` / `modalAnexoEscritoPend`). Columnas asumidas por
-    analogia con "Anexo del Escrito" de Familia (Folio/Doc./Fecha/Nombre Documento/
-    Observación) -- sin ejemplo real con datos, revisar contra una causa real."""
+def _anexo_campos(a: dict) -> tuple[str | None, str | None]:
+    """(fecha, referencia) de una fila del popup de anexo (`modalAnexoEscritoLaboral` /
+    `modalAnexoEscritoPend`). A diferencia de Familia, "Solicitud Laboral.md" define el
+    anexo de Laboral solo con doc/fecha/referencia (sin folio ni observación) -- se
+    sigue el contrato literal, no se armoniza con Familia."""
     v = a.get("valores") or {}
-    folio = _campo(v, "Folio")
     return (
-        int(folio) if folio and folio.isdigit() else None,
         _campo(v, "Fecha"),
-        _campo(v, "Nombre Documento", "Nombre del Documento", "Referencia"),
-        _campo(v, "Observación", "Observacion"),
+        _campo(v, "Referencia", "Nombre Documento", "Nombre del Documento"),
     )
 
 
@@ -329,17 +326,17 @@ async def _persistir_docs_anexos_movimiento(
             delete(MovimientoLaboralAnexo).where(MovimientoLaboralAnexo.movimiento_id == mov.id)
         )
         for i, a in enumerate(anexos_popup, start=1):
-            folio_a, fecha_a, nombre_a, obs_a = _anexo_campos(a)
+            fecha_a, referencia_a = _anexo_campos(a)
             doc = None
             if a.get("doc") or a.get("doc_post"):
                 doc = await _obtener_o_descargar_doc(
                     session, sesion_pjud, causa.id, "movimiento_anexo", f"{clave_base}_anexo{i}",
-                    url=a.get("doc"), post=a.get("doc_post"), referencia=nombre_a, hash_padre=h,
+                    url=a.get("doc"), post=a.get("doc_post"), referencia=referencia_a, hash_padre=h,
                 )
             session.add(
                 MovimientoLaboralAnexo(
                     movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
-                    folio=folio_a, fecha=fecha_a, nombre_documento=nombre_a, observacion=obs_a,
+                    fecha=fecha_a, referencia=referencia_a,
                 )
             )
     elif anexo_urls:

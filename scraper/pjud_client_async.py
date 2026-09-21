@@ -1350,10 +1350,10 @@ class PjudSessionLaboralAsync(PjudSessionAsync):
 
     # `modalAnexoEscritoLaboral` ("Anexo escrito", columna "Anexos" de Movimientos) y
     # `modalAnexoEscritoPend` (columna "Anexo" de Escritos Pendientes, mismo patron que
-    # "Escritos por Resolver" de Civil). Las columnas internas del popup no se vieron
-    # con datos reales (tabla vacia en los ejemplos disponibles); `_anexo_campos` en
-    # el worker asume Folio/Doc./Fecha/Nombre Documento/Observación por analogia con
-    # Familia -- revisar contra una causa real con anexos.
+    # "Escritos por Resolver" de Civil). Confirmado en vivo (2026-09-21, causa
+    # O-692-2019) que la columna con el nombre del documento se llama "Referencia"
+    # (no "Nombre Documento" como en Familia, ni hay Folio/Observación) -- `_anexo_campos`
+    # en el worker sigue el contrato literal de "Solicitud Laboral.md" (doc/fecha/referencia).
     MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoLaboral", "modalAnexoEscritoPend")
     PREFIJOS_HISTORIA = ("movimiento",)
     MODAL_GEOREFERENCIA = "modalGeoReferenciaLaboral"
