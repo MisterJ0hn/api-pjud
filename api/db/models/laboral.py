@@ -131,13 +131,16 @@ class TextoDemandaLaboral(Base):
 
 class AudioLaboral(Base):
     """Filas del popup "Listado de Archivos de Audios de Audiencia"
-    (`modalListadoAudioLaboral`) de la cabecera. CONFIRMADO en vivo (2026-09-18, causa
-    O-692-2019): la celda que el header del popup muestra no trae "Fecha" como fecha
-    corta -- ahi viene el nombre de archivo del audio (largo, p. ej.
-    "1940222756-K-1352 -220317-00-01 - INDIVIDUALIZACIÓN (O-692-2019)(S2).mp3"), asi que
-    `fecha` se ensancho a 300 y el worker (`worker/sync_laboral.py`) ahora detecta el
-    nombre de archivo/fecha por heuristica de contenido en vez de por nombre de columna
-    asumido."""
+    (`modalListadoAudioLaboral`) de la cabecera: columnas reales Nro/Descargar/Audio/
+    Fecha/Referencia -- "Fecha" trae la fecha corta (dd-mm-aaaa) y "Referencia" el
+    nombre de archivo (largo, p. ej. "1940222756-K-1352 -220317-00-01 -
+    INDIVIDUALIZACIÓN (O-692-2019)(S2).mp3"). CONFIRMADO en vivo (2026-09-21, causa
+    O-692-2019): un diagnostico anterior (2026-09-18) creyo que estas 2 columnas venian
+    "swapeadas" -- en realidad la celda "Nro" de este popup es <th> (no <td>), y el
+    extractor generico `JS_EXTRAER_FILAS_CON_ENLACES` (`scraper/pjud_client_async.py`)
+    solo tomaba <td> para los datos, desalineando el resto de las columnas 1 posicion
+    contra los headers. Ya corregido en el extractor; `fecha` se dejo en 300 (mas ancho
+    de lo que la fecha corta necesita) por si acaso, no hace falta angostarlo."""
 
     __tablename__ = "audios_laboral"
 
@@ -221,7 +224,11 @@ class MovimientoLaboralDoc(Base):
 
 
 class MovimientoLaboralAnexo(Base):
-    """Anexos del folio: carpeta-popup `modalAnexoEscritoLaboral` ("Anexo escrito")."""
+    """Anexos del folio: carpeta-popup `modalAnexoEscritoLaboral` ("Anexo escrito").
+    CONFIRMADO en vivo (2026-09-21, causa O-692-2019): columnas reales Doc./Folio/Fecha/
+    Referencia (sin Observación -- la version anterior de este modelo asumia Observación
+    por analogia con Familia y no traia Folio por seguir "Solicitud Laboral.md" al pie de
+    la letra, pero el contrato resulto incompleto en ese ejemplo)."""
 
     __tablename__ = "movimientos_laboral_anexos"
 
@@ -231,6 +238,7 @@ class MovimientoLaboralAnexo(Base):
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_laboral.id"), nullable=True)
     orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    folio: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
     referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
 

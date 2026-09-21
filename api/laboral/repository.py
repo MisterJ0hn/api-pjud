@@ -304,6 +304,7 @@ async def construir_movimientos(session: AsyncSession, causa: CausaLaboral) -> M
                 doc=[MovimientoDocItem(doc=doc_url(d.documento_id)) for d in doc_rows],
                 anexo=[
                     MovimientoAnexoItem(
+                        folio=a.folio,
                         doc=doc_url(a.documento_id),
                         fecha=a.fecha,
                         referencia=a.referencia,

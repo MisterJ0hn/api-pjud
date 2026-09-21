@@ -22,7 +22,6 @@ Politica de persistencia (igual que familia):
 import asyncio
 import logging
 import os
-import re
 import shutil
 
 from sqlalchemy import delete, select
@@ -77,44 +76,19 @@ def _es_seccion(nombre: str, *prefijos: str) -> bool:
     return any(n.startswith(p) for p in prefijos)
 
 
-_RE_ARCHIVO_AUDIO = re.compile(r"\.(mp3|wav|wma|m4a|ogg|aac|flac|opus|amr|3gp)\b", re.IGNORECASE)
-# Confirmado en vivo (2026-09-17, causa O-692-2019): PJUD usa "-" como separador en
-# este popup ("27-03-2020"), no "/" como en el resto del sitio.
-_RE_FECHA = re.compile(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$")
-
-
 def _fila_audio_fecha_referencia(v: dict) -> tuple[str | None, str | None]:
     """(fecha, referencia) de una fila del popup "Listado de Archivos de Audios de
-    Audiencia". CONFIRMADO en vivo (2026-09-17/18, causa O-692-2019): las columnas
-    reales son Nro/Descargar/Audio/Fecha pero vienen SWAPEADAS -- "Audio" trae la fecha
-    como texto y "Fecha" trae el nombre de archivo. Se detecta primero por forma
-    (nombre de archivo de audio / fecha dd/mm/aaaa) en vez de confiar en el nombre de
-    columna.
-
-    Bug real (2026-09-21): cuando el nombre de archivo NO trae una extension
-    reconocida por `_RE_ARCHIVO_AUDIO`, la deteccion por forma no encuentra
-    `referencia` y el fallback anterior usaba `_campo(v, "Fecha")` para `fecha` --
-    como esa celda en realidad es el nombre de archivo, terminaba quedando en `fecha`
-    y `referencia` en null. El fallback ahora usa el swap ya confirmado (columna
-    "Fecha" -> referencia, columna "Audio" -> fecha) en vez del nombre de columna
-    literal."""
-    referencia = fecha = None
-    for texto in v.values():
-        t = (texto or "").strip()
-        if not t:
-            continue
-        if referencia is None and _RE_ARCHIVO_AUDIO.search(t):
-            referencia = t
-        elif fecha is None and _RE_FECHA.match(t):
-            fecha = t
-    if referencia is None:
-        candidato = _campo(v, "Fecha", "Referencia", "Nombre", "Archivo")
-        referencia = candidato if candidato != fecha else None
-    if fecha is None:
-        candidato = _campo(v, "Audio", "Fecha")
-        # No caer de vuelta en el mismo valor ya clasificado como `referencia`.
-        fecha = candidato if candidato != referencia else None
-    return fecha, referencia
+    Audiencia". CONFIRMADO en vivo (2026-09-21, causa O-692-2019): las columnas reales
+    son Nro/Descargar/Audio/Fecha/Referencia -- "Fecha" trae la fecha real (dd-mm-aaaa)
+    y "Referencia" el nombre de archivo, sin swap. El "swap" diagnosticado en la sesion
+    anterior (2026-09-17/18) era un sintoma, no la causa: la celda "Nro" de este popup
+    es <th> (no <td>), y `JS_EXTRAER_FILAS_CON_ENLACES` solo tomaba <td> para los datos
+    de la fila -- eso desalineaba TODAS las columnas siguientes en 1 posicion contra los
+    headers (Audio recibia el texto de Fecha, Fecha el de Referencia, y Referencia
+    quedaba sin celda). Fix real en `scraper/pjud_client_async.py`. Con el extractor
+    corregido alcanza con leer los headers reales directamente."""
+    v = v or {}
+    return _campo(v, "Fecha"), _campo(v, "Referencia")
 
 
 # --- Descarga de documentos (idempotente por clave_logica) --------------------
@@ -284,15 +258,19 @@ async def _registrar_documento_desde_ruta_temporal(
 # --- Movimientos ---------------------------------------------------------------
 
 
-def _anexo_campos(a: dict) -> tuple[str | None, str | None]:
-    """(fecha, referencia) de una fila del popup de anexo (`modalAnexoEscritoLaboral` /
-    `modalAnexoEscritoPend`). A diferencia de Familia, "Solicitud Laboral.md" define el
-    anexo de Laboral solo con doc/fecha/referencia (sin folio ni observación) -- se
-    sigue el contrato literal, no se armoniza con Familia."""
+def _anexo_campos(a: dict) -> tuple[int | None, str | None, str | None]:
+    """(folio, fecha, referencia) de una fila del popup de anexo (`modalAnexoEscritoLaboral`
+    / `modalAnexoEscritoPend`). CONFIRMADO en vivo (2026-09-21, causa O-692-2019):
+    columnas reales Doc./Folio/Fecha/Referencia (sin Observación) -- ya no hace falta
+    heuristica, el bug de "referencia" saliendo null era el desalineo de
+    `JS_EXTRAER_FILAS_CON_ENLACES` (ver `scraper/pjud_client_async.py`), no un problema
+    de nombres de columna."""
     v = a.get("valores") or {}
+    folio = _campo(v, "Folio")
     return (
+        int(folio) if folio and folio.isdigit() else None,
         _campo(v, "Fecha"),
-        _campo(v, "Referencia", "Nombre Documento", "Nombre del Documento"),
+        _campo(v, "Referencia"),
     )
 
 
@@ -333,7 +311,7 @@ async def _persistir_docs_anexos_movimiento(
             delete(MovimientoLaboralAnexo).where(MovimientoLaboralAnexo.movimiento_id == mov.id)
         )
         for i, a in enumerate(anexos_popup, start=1):
-            fecha_a, referencia_a = _anexo_campos(a)
+            folio_a, fecha_a, referencia_a = _anexo_campos(a)
             doc = None
             if a.get("doc") or a.get("doc_post"):
                 doc = await _obtener_o_descargar_doc(
@@ -343,7 +321,7 @@ async def _persistir_docs_anexos_movimiento(
             session.add(
                 MovimientoLaboralAnexo(
                     movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
-                    fecha=fecha_a, referencia=referencia_a,
+                    folio=folio_a, fecha=fecha_a, referencia=referencia_a,
                 )
             )
     elif anexo_urls:
@@ -886,15 +864,17 @@ async def sincronizar_causa_laboral(
                     )
                 )
             ).scalar_one_or_none()
-            # CONFIRMADO en vivo (2026-09-17/18, O-692-2019): las columnas reales son
-            # Nro/Descargar/Audio/Fecha -- "Audio" trae la fecha como texto y "Fecha"
-            # trae el nombre de archivo (ver `_fila_audio_fecha_referencia`). El link de
-            # descarga vive en la celda "Nro", PERO `audioByPass.php` rechaza (WAF,
-            # "Request Rejected" con HTTP 200) cualquier pedido por fetch/HTTP aunque la
-            # sesion sea valida -- el scraper ya lo descarga con un click REAL de
-            # Playwright durante la extraccion (`descarga_click`, ver
-            # `MODALES_DESCARGA_CLICK`); `urls` queda solo de fallback por si algun caso
-            # no trae `descarga_click` (p. ej. el link no tenia `download`).
+            # CONFIRMADO en vivo (2026-09-21, O-692-2019): las columnas reales son
+            # Nro/Descargar/Audio/Fecha/Referencia (ver `_fila_audio_fecha_referencia` y
+            # el fix del desalineo en `JS_EXTRAER_FILAS_CON_ENLACES`). El link de
+            # descarga vive en la celda "Descargar" (antes del fix del extractor
+            # quedaba mal indexado bajo "Nro", por eso se prueba primero como
+            # fallback). `audioByPass.php` rechaza (WAF, "Request Rejected" con HTTP
+            # 200) cualquier pedido por fetch/HTTP aunque la sesion sea valida -- el
+            # scraper ya lo descarga con un click REAL de Playwright durante la
+            # extraccion (`descarga_click`, ver `MODALES_DESCARGA_CLICK`); `urls` queda
+            # solo de fallback por si algun caso no trae `descarga_click` (p. ej. el
+            # link no tenia `download`).
             descarga_click = sub.get("descarga_click")
             urls = (
                 sub.get("enlaces", {}).get("Nro")

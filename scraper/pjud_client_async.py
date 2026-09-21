@@ -116,12 +116,22 @@ JS_SELECCIONAR_FILA_RIT = """(args) => {
 # indicador de orden real de PJUD para esa lista, mas confiable que el orden del DOM o
 # la clave natural referencia+fecha (que se puede repetir).
 JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
+    const headerRow = t.querySelector('thead tr') || t.querySelector('tr:first-child');
     const headerCells = t.querySelectorAll('thead th');
     const headers = (headerCells.length ? Array.from(headerCells) : Array.from(t.querySelectorAll('tr:first-child th')))
         .map(h => h.textContent.trim());
     const bodyRows = t.querySelectorAll('tbody tr').length ? t.querySelectorAll('tbody tr') : t.querySelectorAll('tr');
     const filas = Array.from(bodyRows).map(tr => {
-        const celdas = Array.from(tr.querySelectorAll('td'));
+        // Confirmado en vivo (2026-09-21, popup "Listado de Archivos de Audios de
+        // Audiencia" de Laboral): la primera celda de cada fila ("Nro") es <th>, no
+        // <td> -- filtrar solo por <td> la saltaba y desalineaba TODAS las columnas
+        // siguientes en 1 posicion contra `headers` (asi se explica el "swap"
+        // Audio/Fecha/Referencia que se habia diagnosticado antes por sintoma en vez
+        // de por causa). Se incluye <th> tambien, excluyendo explicitamente la fila
+        // de headers por identidad (relevante solo cuando no hay <thead> propio y
+        // `headerRow` termina siendo la primera fila del <tbody>).
+        if (tr === headerRow) return null;
+        const celdas = Array.from(tr.querySelectorAll('td, th'));
         if (celdas.length === 0) return null;
         const valores = {};
         const enlaces = {};
@@ -1350,10 +1360,14 @@ class PjudSessionLaboralAsync(PjudSessionAsync):
 
     # `modalAnexoEscritoLaboral` ("Anexo escrito", columna "Anexos" de Movimientos) y
     # `modalAnexoEscritoPend` (columna "Anexo" de Escritos Pendientes, mismo patron que
-    # "Escritos por Resolver" de Civil). Confirmado en vivo (2026-09-21, causa
-    # O-692-2019) que la columna con el nombre del documento se llama "Referencia"
-    # (no "Nombre Documento" como en Familia, ni hay Folio/Observación) -- `_anexo_campos`
-    # en el worker sigue el contrato literal de "Solicitud Laboral.md" (doc/fecha/referencia).
+    # "Escritos por Resolver" de Civil). CONFIRMADO en vivo (2026-09-21, causa O-692-2019,
+    # `modalAnexoEscritoLaboral`): columnas reales Doc./Folio/Fecha/Referencia, todas
+    # <td> (sin Observación) -- `modalAnexoEscritoPend` se asume igual por analogia (no
+    # confirmado, la causa de prueba no tenia escritos pendientes). Aca el bug real era
+    # solo de nombre de columna ("Referencia", no "Nombre Documento" como en Familia).
+    # Ver mas abajo (`Listado de Archivos de Audios de Audiencia`) por un bug DISTINTO
+    # y mas grave en el extractor generico: ese popup tiene la primera celda ("Nro")
+    # como <th>, lo que desalineaba TODAS las columnas siguientes en 1 posicion.
     MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoLaboral", "modalAnexoEscritoPend")
     PREFIJOS_HISTORIA = ("movimiento",)
     MODAL_GEOREFERENCIA = "modalGeoReferenciaLaboral"
@@ -1368,22 +1382,23 @@ class PjudSessionLaboralPrivada(PjudSessionPrivada):
     `api/laboral/router.py`): este modo solo se usa cuando el request de
     sincronizar_laboral trae rut/clave/metodo_login.
 
-    ADVERTENCIA: `TAB_COMPETENCIA` / `PANE_COMPETENCIA` / `CHECK_FILTROS` / `CAMPO_*` /
-    `BTN_BUSCAR` / `MODAL_DETALLE` son una ESTIMACION por analogia con los patrones de
-    nombres de Civil (`...MisCauCiv`, `tab3`) y Familia (`...MisCauFam`, `tab7`): no
-    hay ejemplo HTML de "Mis Causas" -> pestana Laboral en este repo (los ejemplos
-    disponibles son todos de la Consulta Unificada publica). NO VERIFICADO EN VIVO --
-    hay que confirmarlos contra una sesion real antes de usar el modo privado en
-    produccion. La extraccion del modal una vez abierto (`_extraer_detalle_de_modal`)
-    reusa el mismo DOM que la Consulta Unificada, asi que los ids de popups de
-    `PjudSessionLaboralAsync` (Anexos/Georeferencia) si estan confirmados.
+    CONFIRMADO en vivo (2026-09-18 y 2026-09-21, causa O-692-2019, login Clave Unica):
+    todos los ids de abajo son correctos EXCEPTO `CAMPO_TIPO`, que tenia un typo de
+    mayuscula -- el select real es `tipoMisCaulab` ("lab" en minuscula), no
+    `tipoMisCauLab` como el resto de los campos (`rolMisCauLab`/`anhoMisCauLab`/etc. si
+    usan "Lab" con mayuscula). `select_option` sobre un id inexistente solo logueaba un
+    warning y seguia sin aplicar el filtro de tipo -- no rompia la busqueda pero
+    devolvia resultados sin filtrar por tipo de causa. La extraccion del modal una vez
+    abierto (`_extraer_detalle_de_modal`) reusa el mismo DOM que la Consulta Unificada,
+    asi que los ids de popups de `PjudSessionLaboralAsync` (Anexos/Georeferencia)
+    tambien estan confirmados.
     """
 
     NOMBRE_COMPETENCIA = "Laboral"
     TAB_COMPETENCIA = "laboralTab"
     PANE_COMPETENCIA = "tab4"
     CHECK_FILTROS = "filtroMisCauLab"
-    CAMPO_TIPO = "tipoMisCauLab"
+    CAMPO_TIPO = "tipoMisCaulab"
     CAMPO_ROL = "rolMisCauLab"
     CAMPO_ANIO = "anhoMisCauLab"
     CAMPO_ESTADO = "estadoCausaMisCauLab"
