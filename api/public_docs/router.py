@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db.models.causas import Causa, Cuaderno
+from api.db.models.cobranza import CausaCobranza, DocumentoCobranza
 from api.db.models.documentos import Documento
 from api.db.models.familia import CausaFamilia, DocumentoFamilia
 from api.db.models.laboral import CausaLaboral, DocumentoLaboral
@@ -27,9 +28,11 @@ _MIME_POR_EXTENSION = {
 }
 
 # Extensiones que puede traer la columna "Doc." de Laboral (Movimientos, Diligencias,
-# etc.): la mayoria son pdf, pero PJUD mezcla .doc/.docx en la misma columna --
-# confirmado en vivo 2026-09-18 (ver `extension_por_content_type`).
-_MIME_DOCUMENTOS_LABORAL = {
+# etc.) y de Cobranza (Historia, Documentos Laboral): la mayoria son pdf, pero PJUD
+# mezcla .doc/.docx en la misma columna -- confirmado en vivo en Laboral (2026-09-18) y
+# en Cobranza (popup "Detalle Documentos Laboral", forms POST docLaboralCobranza.php)
+# (ver `extension_por_content_type`).
+_MIME_DOCUMENTOS_MIXTOS = {
     ".pdf": "application/pdf",
     ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -166,7 +169,7 @@ async def _resolver_y_servir_laboral(session: AsyncSession, causa_id: str, nombr
     # mezcla .doc/.docx en la misma columna "Doc." -- confirmado en vivo 2026-09-18 --
     # asi que aca no se puede asumir `.pdf` fijo como en `_resolver_y_servir_familia`.
     nombre_archivo, ext = os.path.splitext(nombre_con_ext)
-    media_type = _MIME_DOCUMENTOS_LABORAL.get(ext.lower())
+    media_type = _MIME_DOCUMENTOS_MIXTOS.get(ext.lower())
     if media_type is None:
         raise HTTPException(status_code=404, detail="No encontrado")
 
@@ -219,6 +222,63 @@ async def _resolver_y_servir_imagen_laboral(session: AsyncSession, causa_id: str
     return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
 
 
+async def _resolver_y_servir_cobranza(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    # Igual que Laboral: la columna "Doc." de Historia y el popup "Documentos Laboral"
+    # mezclan pdf/doc/docx -- no se puede asumir `.pdf` fijo.
+    nombre_archivo, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_DOCUMENTOS_MIXTOS.get(ext.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    try:
+        cid = uuid.UUID(causa_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    causa = (await session.execute(select(CausaCobranza).where(CausaCobranza.id == cid))).scalar_one_or_none()
+    if causa is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoCobranza).where(
+                DocumentoCobranza.causa_cobranza_id == causa.id,
+                DocumentoCobranza.nombre_archivo == nombre_archivo,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
+
+
+async def _resolver_y_servir_imagen_cobranza(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    nombre, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_POR_EXTENSION.get(ext.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    try:
+        cid = uuid.UUID(causa_id)
+        documento_id = uuid.UUID(nombre)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoCobranza).where(
+                DocumentoCobranza.id == documento_id,
+                DocumentoCobranza.causa_cobranza_id == cid,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
+
+
 async def _resolver_y_servir_audio_laboral(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
     nombre, ext = os.path.splitext(nombre_con_ext)
     media_type = _MIME_POR_EXTENSION.get(ext.lower())
@@ -245,9 +305,9 @@ async def _resolver_y_servir_audio_laboral(session: AsyncSession, causa_id: str,
     return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
 
 
-# Declarada ANTES de `documento_familia` / `documento_laboral` (2 segmentos): estas
-# tienen un segmento "img" de mas, asi que no colisionan por estructura de ruta, pero
-# se dejan primero por legibilidad.
+# Declarada ANTES de `documento_familia` / `documento_laboral` / `documento_cobranza`
+# (2 segmentos): estas tienen un segmento "img" de mas, asi que no colisionan por
+# estructura de ruta, pero se dejan primero por legibilidad.
 @router.get("/familia/{causa_id}/img/{nombre_con_ext}")
 async def imagen_familia(causa_id: str, nombre_con_ext: str, session: AsyncSession = Depends(get_session)):
     return await _resolver_y_servir_imagen_familia(session, causa_id, nombre_con_ext)
@@ -263,9 +323,14 @@ async def audio_laboral(causa_id: str, nombre_con_ext: str, session: AsyncSessio
     return await _resolver_y_servir_audio_laboral(session, causa_id, nombre_con_ext)
 
 
+@router.get("/cobranza/{causa_id}/img/{nombre_con_ext}")
+async def imagen_cobranza(causa_id: str, nombre_con_ext: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_imagen_cobranza(session, causa_id, nombre_con_ext)
+
+
 # Declaradas ANTES de las rutas civiles de 2 segmentos para que `/public/familia/<uuid>/<name>`
-# / `/public/laboral/<uuid>/<name>` no las agarre `documento_cuaderno` con
-# causa_id="familia"/"laboral".
+# / `/public/laboral/<uuid>/<name>` / `/public/cobranza/<uuid>/<name>` no las agarre
+# `documento_cuaderno` con causa_id="familia"/"laboral"/"cobranza".
 @router.get("/familia/{causa_id}/{nombre_archivo}")
 async def documento_familia(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
     return await _resolver_y_servir_familia(session, causa_id, nombre_archivo)
@@ -274,6 +339,11 @@ async def documento_familia(causa_id: str, nombre_archivo: str, session: AsyncSe
 @router.get("/laboral/{causa_id}/{nombre_archivo}")
 async def documento_laboral(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
     return await _resolver_y_servir_laboral(session, causa_id, nombre_archivo)
+
+
+@router.get("/cobranza/{causa_id}/{nombre_archivo}")
+async def documento_cobranza(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_cobranza(session, causa_id, nombre_archivo)
 
 
 @router.get("/{causa_id}/{nombre_archivo}")
