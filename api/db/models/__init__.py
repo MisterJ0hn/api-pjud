@@ -1,6 +1,22 @@
 from api.db.models.auth import ClienteApi, TokenAcceso, Usuario
 from api.db.models.cabecera import AnexoCausa, InformacionReceptor
 from api.db.models.causas import Causa, Cuaderno
+from api.db.models.cobranza import (
+    AnexoCausaCobranza,
+    CausaCobranza,
+    CuadernoCobranza,
+    DiligenciaCobranza,
+    DocumentoCobranza,
+    DocumentoLaboralCobranza,
+    HistoriaCobranza,
+    HistoriaCobranzaAnexo,
+    HistoriaCobranzaDoc,
+    HistoriaCobranzaGeoImagen,
+    InformacionReceptorCobranza,
+    LiquidacionCobranza,
+    LitiganteCobranza,
+    NotificacionCobranza,
+)
 from api.db.models.documentos import Documento
 from api.db.models.familia import (
     AnexoCausaFamilia,
@@ -92,4 +108,18 @@ __all__ = [
     "DiligenciaLaboral",
     "LiquidacionLaboral",
     "EscritoPendienteLaboral",
+    "CausaCobranza",
+    "DocumentoCobranza",
+    "CuadernoCobranza",
+    "AnexoCausaCobranza",
+    "InformacionReceptorCobranza",
+    "HistoriaCobranza",
+    "HistoriaCobranzaDoc",
+    "HistoriaCobranzaAnexo",
+    "HistoriaCobranzaGeoImagen",
+    "LitiganteCobranza",
+    "NotificacionCobranza",
+    "DiligenciaCobranza",
+    "LiquidacionCobranza",
+    "DocumentoLaboralCobranza",
 ]

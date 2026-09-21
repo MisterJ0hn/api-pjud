@@ -1410,3 +1410,82 @@ class PjudSessionLaboralPrivada(PjudSessionPrivada):
     MODAL_GEOREFERENCIA = "modalGeoReferenciaLaboral"
     PREFIJOS_ANEXO_POPUP_EXTRA = ("escritos pendientes",)
     MODALES_DESCARGA_CLICK = frozenset({"modalListadoAudioLaboral"})
+
+
+class PjudSessionCobranzaAsync(PjudSessionAsync):
+    """Igual que `PjudSessionAsync` (Consulta Unificada publica) pero con los ids de
+    popup propios de Cobranza en vez de los de Civil (default de `_PjudModalScraper`).
+
+    Selectores CONFIRMADOS en vivo contra `ejemplos/causa cobranza/*.html` (Consulta
+    Unificada publica, causas A-1-2025 del 1o Juzgado de Letras de Quillota y C-10-2025
+    del Jdo. de Letras de San Vicente): modal de detalle `modalDetalleCobranza`,
+    pestanas Historia (`historiaCob`) / Litigantes (`litigantesCob`) / Notificaciones
+    (`notificacionCob`) / Diligencias (`diligenciaCob`) / Liquidacion (`liquidacionCob`).
+    Hay ademas una pestana "Deuda Act." (`deudaCob`) deshabilitada en el UI (su `<li>`
+    esta comentado) y sin contraparte en Solicitud Cobranza.md -- no se scrapea.
+
+    La cabecera (`table.table-titulos`) la extrae generico `JS_EXTRAER_CABECERA`: "Doc.
+    Demanda" y "Ebook" caen en `cabecera.descargas` (forms GET); "Titulo Ejec." y
+    "Certificado de Envío" son iconos deshabilitados cuando no hay documento (mismo
+    patron, forms GET cuando si lo hay -- no confirmado en vivo con dato real, solo por
+    analogia con doc_demanda/ebook); "Anexos de la causa", "Información notificaciones
+    receptor" y "Documentos Laboral" caen en `cabecera.submodales` (icono con `<strong>`
+    + `data-toggle="modal"` sin texto propio) -- ver `worker/sync_cobranza.py`.
+    "Documentos Exhorto" y "Causas Acumuladas" tambien son campos de cabecera (icono
+    deshabilitado en los 2 ejemplos disponibles, sin Documentos/Causas asociados) pero
+    no estan en Solicitud Cobranza.md y no se scrapean -- estructura desconocida.
+
+    Cobranza puede tener varios cuadernos (selector "Historia Causa Cuaderno",
+    `#selCuadernoCob` -- ej. "1 - principal" / "2 - Apremio Ejecutivo Obligación de
+    Dar", solo confirmado con 1 opcion en los ejemplos disponibles): lo detecta el
+    mismo mecanismo generico de `_extraer_detalle_de_modal` (busca el `<select>` del
+    modal), sin cambios propios.
+    """
+
+    # `modalAnexoEscritoCobranza` ("Anexo excrito" [sic], columna "Anexo" de Historia):
+    # confirmado que existe y su trigger (icono con `data-toggle="modal"`), pero su
+    # contenido no aparecio abierto en ningun ejemplo disponible -- se asume la misma
+    # forma Doc./Fecha/Referencia que "Anexo de la Causa" y "Documentos Laboral"
+    # (confirmadas ambas en vivo), no confirmada punto por punto.
+    MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoCobranza",)
+    PREFIJOS_HISTORIA = ("historia",)
+    MODAL_GEOREFERENCIA = "modalGeoReferenciaCobranza"
+    # Cobranza no tiene Exhortos/Escritos por Resolver como Civil ni Escritos Pendientes
+    # como Laboral -- solo Historia usa columna "Anexo" con popup.
+    PREFIJOS_ANEXO_POPUP_EXTRA = ()
+
+
+class PjudSessionCobranzaPrivada(PjudSessionPrivada):
+    """Igual que `PjudSessionPrivada` pero para la pestana "Cobranza" de Mis Causas.
+
+    NO CONFIRMADO EN VIVO (a diferencia de `PjudSessionCobranzaAsync`): no hay ejemplo
+    disponible de "Mis Causas" -> Cobranza (`ejemplos/causa cobranza/*.html` son todos
+    de la Consulta Unificada publica). Los ids de abajo son una extrapolacion por
+    analogia con Civil/Laboral/Familia (mismo patron "Mis Causas..." + sufijo de
+    competencia) y con el propio DOM publico de Cobranza (sufijo "Cob" -- ver
+    `selCuadernoCob`/`historiaCob`/etc. en `PjudSessionCobranzaAsync`):
+
+    - `PANE_COMPETENCIA = "tab6"`: en Civil/Laboral el numero de tab coincide con el
+      codigo de competencia de la Consulta Unificada (civil=3->tab3, laboral=4->tab4;
+      `COMPETENCIAS` en este modulo); Cobranza es codigo 6 -> tab6.
+    - El resto sigue el patron "Mis Causas..." + "Cob" (mismo sufijo que el DOM publico).
+
+    Revisar contra el sitio real (como se hizo con Laboral, que tenia un typo de
+    mayuscula en `CAMPO_TIPO`) antes de confiar en sincronizaciones privadas de Cobranza.
+    """
+
+    NOMBRE_COMPETENCIA = "Cobranza"
+    TAB_COMPETENCIA = "cobranzaTab"
+    PANE_COMPETENCIA = "tab6"
+    CHECK_FILTROS = "filtroMisCauCob"
+    CAMPO_TIPO = "tipoMisCauCob"
+    CAMPO_ROL = "rolMisCauCob"
+    CAMPO_ANIO = "anhoMisCauCob"
+    CAMPO_ESTADO = "estadoCausaMisCauCob"
+    BTN_BUSCAR = "btnConsultaMisCauCob"
+    MODAL_DETALLE = "modalDetalleMisCauCobranza"
+
+    MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoCobranza",)
+    PREFIJOS_HISTORIA = ("historia",)
+    MODAL_GEOREFERENCIA = "modalGeoReferenciaCobranza"
+    PREFIJOS_ANEXO_POPUP_EXTRA = ()

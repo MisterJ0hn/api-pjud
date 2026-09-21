@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from api.auth.router import router as auth_router
 from api.catalogo.router import router as catalogo_router
 from api.civil.router import router as civil_router
+from api.cobranza.router import router as cobranza_router
 from api.familia.router import router as familia_router
 from api.laboral.router import router as laboral_router
 from api.errors.handlers import registrar_exception_handlers
@@ -18,6 +19,7 @@ registrar_exception_handlers(app)
 app.include_router(auth_router)
 app.include_router(catalogo_router)
 app.include_router(civil_router)
+app.include_router(cobranza_router)
 app.include_router(familia_router)
 app.include_router(laboral_router)
 app.include_router(public_docs_router)

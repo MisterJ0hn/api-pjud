@@ -105,7 +105,7 @@ Response 200:
         "ebook":{
             "nombre_archivo": "ebook", # debe ser un nombre IDEMPOTENTE
             "url": "https://api-pjud.temposoft.cl/public/ebook.pdf"
-        }
+        },
         "anexos_causa": [
             {
                 "fecha":"30/01/2026",

@@ -174,7 +174,17 @@ Response 200:
             "anexo": [],
             "etapa":"Mandamiento",
             "tramite":"Actuación Receptor",
-            "descripcion_tramite": "NOTIFICACIÓN DE DEMANDA (Exitosa) Diligencia:07/04/2026 17:10",
+             #actualizacion 21-09-2026. descripcion del tramite en algunos viene un array de documentos de audiencia
+            "descripcion_tramite": {
+                "descripcion":"NOTIFICACIÓN DE DEMANDA (Exitosa) Diligencia:07/04/2026 17:10",
+                "documentos":
+                [
+                    {
+                        "doc":"https://api-pjud.temposoft.cl/public/movimiento_folio1_tramite1_.pdf",
+                        "fecha":"17/03/2022","referencia":"ref.343"
+                    }
+                ]
+            },
             "fecha_tramite": "10/04/2026 (07/04/2026)",
             "estado":"Firmado",
             "georreferencia":  { #en pjud es un link que abre un popup id=modalGeoReferenciaLaboral.
@@ -215,6 +225,7 @@ Response 200:
             "etapa":"Mandamiento",
             "tramite":"",
             "descripcion_tramite": "Mandamiento",
+            
             "fecha_tramite": "05/02/2026",
             "estado":"Firmado",
             "georreferencia":  { #en pjud es un link que abre un popup id=modalGeoReferenciaLaboral.
