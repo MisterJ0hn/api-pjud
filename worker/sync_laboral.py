@@ -77,7 +77,7 @@ def _es_seccion(nombre: str, *prefijos: str) -> bool:
     return any(n.startswith(p) for p in prefijos)
 
 
-_RE_ARCHIVO_AUDIO = re.compile(r"\.(mp3|wav|wma|m4a|ogg)\b", re.IGNORECASE)
+_RE_ARCHIVO_AUDIO = re.compile(r"\.(mp3|wav|wma|m4a|ogg|aac|flac|opus|amr|3gp)\b", re.IGNORECASE)
 # Confirmado en vivo (2026-09-17, causa O-692-2019): PJUD usa "-" como separador en
 # este popup ("27-03-2020"), no "/" como en el resto del sitio.
 _RE_FECHA = re.compile(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$")
@@ -85,11 +85,19 @@ _RE_FECHA = re.compile(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$")
 
 def _fila_audio_fecha_referencia(v: dict) -> tuple[str | None, str | None]:
     """(fecha, referencia) de una fila del popup "Listado de Archivos de Audios de
-    Audiencia". CONFIRMADO en vivo (2026-09-18, causa O-692-2019): el nombre de columna
-    no es confiable -- el popup real trajo el nombre de archivo del audio bajo la
-    celda que se habia asumido como "Fecha" (ver historial de este archivo). Se detecta
-    el contenido por forma (nombre de archivo de audio / fecha dd/mm/aaaa) en vez de
-    confiar en el nombre de columna, y se cae al nombre de columna solo si nada calza."""
+    Audiencia". CONFIRMADO en vivo (2026-09-17/18, causa O-692-2019): las columnas
+    reales son Nro/Descargar/Audio/Fecha pero vienen SWAPEADAS -- "Audio" trae la fecha
+    como texto y "Fecha" trae el nombre de archivo. Se detecta primero por forma
+    (nombre de archivo de audio / fecha dd/mm/aaaa) en vez de confiar en el nombre de
+    columna.
+
+    Bug real (2026-09-21): cuando el nombre de archivo NO trae una extension
+    reconocida por `_RE_ARCHIVO_AUDIO`, la deteccion por forma no encuentra
+    `referencia` y el fallback anterior usaba `_campo(v, "Fecha")` para `fecha` --
+    como esa celda en realidad es el nombre de archivo, terminaba quedando en `fecha`
+    y `referencia` en null. El fallback ahora usa el swap ya confirmado (columna
+    "Fecha" -> referencia, columna "Audio" -> fecha) en vez del nombre de columna
+    literal."""
     referencia = fecha = None
     for texto in v.values():
         t = (texto or "").strip()
@@ -100,12 +108,11 @@ def _fila_audio_fecha_referencia(v: dict) -> tuple[str | None, str | None]:
         elif fecha is None and _RE_FECHA.match(t):
             fecha = t
     if referencia is None:
-        referencia = _campo(v, "Referencia", "Nombre", "Archivo")
+        candidato = _campo(v, "Fecha", "Referencia", "Nombre", "Archivo")
+        referencia = candidato if candidato != fecha else None
     if fecha is None:
-        candidato = _campo(v, "Fecha")
-        # No caer de vuelta en el mismo valor ya clasificado como `referencia` --
-        # confirmado en vivo que la columna "Fecha" del popup puede en realidad traer
-        # el nombre de archivo (ver docstring de esta funcion).
+        candidato = _campo(v, "Audio", "Fecha")
+        # No caer de vuelta en el mismo valor ya clasificado como `referencia`.
         fecha = candidato if candidato != referencia else None
     return fecha, referencia
 
