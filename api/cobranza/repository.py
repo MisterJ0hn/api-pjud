@@ -146,6 +146,26 @@ def _doc_ref(doc: DocumentoCobranza | None, causa_id) -> DocumentoRef | None:
     )
 
 
+def _anexo_item(
+    doc: DocumentoCobranza | None, causa_id, fecha: str | None, referencia: str | None
+) -> AnexoCausaCobranzaItem:
+    # Misma forma para "Anexos de la causa" y "Documentos Laboral" (ver Solicitud
+    # Cobranza.md / popup "Detalle Documentos Laboral"). La extension viene del archivo
+    # real en disco -- estos documentos mezclan pdf/doc/docx (confirmado en vivo, causa
+    # C-2552-2015: "Resolución de Reenvío a Cobranza" y "Dictación de Sentencia" son
+    # .doc); sin esto la URL quedaba forzada a ".pdf" y el documento real no se podia
+    # descargar aunque `documento_id` estuviera bien guardado.
+    if doc is None:
+        return AnexoCausaCobranzaItem(fecha=fecha, referencia=referencia, nombre_doc=None, doc=None)
+    _, ext = os.path.splitext(doc.ruta_archivo)
+    return AnexoCausaCobranzaItem(
+        fecha=fecha,
+        referencia=referencia,
+        nombre_doc=doc.nombre_archivo,
+        doc=url_publica_documento_cobranza(causa_id, doc.nombre_archivo, ext or ".pdf"),
+    )
+
+
 async def construir_causa_detalle(session: AsyncSession, causa: CausaCobranza) -> CausaCobranzaDetalle:
     documentos_cabecera = (
         await session.execute(select(DocumentoCobranza).where(DocumentoCobranza.causa_cobranza_id == causa.id))
@@ -164,17 +184,7 @@ async def construir_causa_detalle(session: AsyncSession, causa: CausaCobranza) -
         )
     ).scalars().all()
     anexos = [
-        AnexoCausaCobranzaItem(
-            fecha=a.fecha,
-            referencia=a.referencia,
-            nombre_doc=docs_por_id[a.documento_id].nombre_archivo if a.documento_id in docs_por_id else None,
-            doc=(
-                url_publica_documento_cobranza(causa.id, docs_por_id[a.documento_id].nombre_archivo)
-                if a.documento_id in docs_por_id
-                else None
-            ),
-        )
-        for a in anexos_rows
+        _anexo_item(docs_por_id.get(a.documento_id), causa.id, a.fecha, a.referencia) for a in anexos_rows
     ]
 
     info_rows = (
@@ -207,17 +217,7 @@ async def construir_causa_detalle(session: AsyncSession, causa: CausaCobranza) -
         )
     ).scalars().all()
     documentos_laboral = [
-        AnexoCausaCobranzaItem(
-            fecha=d.fecha,
-            referencia=d.referencia,
-            nombre_doc=docs_por_id[d.documento_id].nombre_archivo if d.documento_id in docs_por_id else None,
-            doc=(
-                url_publica_documento_cobranza(causa.id, docs_por_id[d.documento_id].nombre_archivo)
-                if d.documento_id in docs_por_id
-                else None
-            ),
-        )
-        for d in doc_lab_rows
+        _anexo_item(docs_por_id.get(d.documento_id), causa.id, d.fecha, d.referencia) for d in doc_lab_rows
     ]
 
     if causa.estado_sync == CAMPO_ESTADO_COMPLETO:

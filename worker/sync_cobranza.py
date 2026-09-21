@@ -722,26 +722,39 @@ async def sincronizar_causa_cobranza(
                 )
             )
         ).scalar_one_or_none()
-        # Confirmado en vivo: form POST (docLaboralCobranza.php), a diferencia de Doc.
-        # Demanda/Ebook/Anexo de la Causa que son GET.
+        # `docLaboralCobranza.php` viene a veces como form GET (enlaces["Doc."],
+        # confirmado en vivo en Mis Causas privado, causa C-2552-2015) y a veces como
+        # POST (enlaces["posts"]["Doc."], visto en un ejemplo de la Consulta
+        # Unificada publica) -- se prueban ambos, GET primero. El bug original solo
+        # miraba `posts`: cuando PJUD mandaba GET, `documento_id` quedaba siempre None
+        # y el documento nunca se descargaba.
+        urls = sub.get("enlaces", {}).get("Doc.") or []
         posts = sub.get("posts", {}).get("Doc.") or []
-        if existente is not None:
-            if posts and not await _documento_en_disco(session, existente.documento_id):
-                doc = await _obtener_o_descargar_doc(
+
+        async def _descargar_doc_laboral() -> DocumentoCobranza | None:
+            if urls:
+                return await _obtener_o_descargar_doc(
+                    session, sesion_pjud, causa.id, "documento_laboral", f"doclab_{slug(referencia)}",
+                    urls[0], referencia=referencia,
+                )
+            if posts:
+                return await _obtener_o_descargar_doc(
                     session, sesion_pjud, causa.id, "documento_laboral", f"doclab_{slug(referencia)}",
                     post=posts[0], referencia=referencia,
                 )
+            return None
+
+        if existente is not None:
+            if (urls or posts) and not await _documento_en_disco(session, existente.documento_id):
+                doc = await _descargar_doc_laboral()
                 if doc is not None:
                     existente.documento_id = doc.id
                 await session.commit()
             continue
         hubo_cambios = True
         documento_id = None
-        if posts:
-            doc = await _obtener_o_descargar_doc(
-                session, sesion_pjud, causa.id, "documento_laboral", f"doclab_{slug(referencia)}",
-                post=posts[0], referencia=referencia,
-            )
+        if urls or posts:
+            doc = await _descargar_doc_laboral()
             documento_id = doc.id if doc else None
         session.add(
             DocumentoLaboralCobranza(
