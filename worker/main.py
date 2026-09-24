@@ -150,6 +150,66 @@ def _limpiar_credenciales(job: SyncJob) -> None:
     job.metodo_login = None
 
 
+# Por competencia: sesion publica (Consulta Unificada), sesion privada (Mis Causas) y
+# funcion de sincronizacion. `None` en la publica de civil = se reusa la sesion compartida
+# y de larga duracion de `run()`; las demas abren su propia sesion por job porque sus ids
+# de popup son atributos de clase (no se puede reusar `sesion_pjud` sin cambiarle la clase).
+SESIONES_PUBLICAS = {
+    "civil": None,
+    "laboral": PjudSessionLaboralAsync,
+    "cobranza": PjudSessionCobranzaAsync,
+    "penal": PjudSessionPenalAsync,
+}
+SESIONES_PRIVADAS = {
+    "civil": PjudSessionPrivada,
+    "laboral": PjudSessionLaboralPrivada,
+    "cobranza": PjudSessionCobranzaPrivada,
+    "penal": PjudSessionPenalPrivada,
+}
+SINCRONIZADORES = {
+    "civil": sincronizar_causa,
+    "laboral": sincronizar_causa_laboral,
+    "cobranza": sincronizar_causa_cobranza,
+    "penal": sincronizar_causa_penal,
+}
+
+
+async def _sincronizar_publica_luego_privada(
+    session, sesion_pjud, job: SyncJob, causa, competencia: str, privada: bool, progreso, abiertas: dict
+) -> None:
+    """Busca primero en la Consulta Unificada (publica). Solo si la causa no aparece ahi
+    y el job trae credenciales, cae a "Mis Causas" (login). Sin credenciales, una causa no
+    encontrada en la Unificada es error, igual que antes."""
+    sincronizar = SINCRONIZADORES[competencia]
+    clase_publica = SESIONES_PUBLICAS[competencia]
+    try:
+        if clase_publica is None:
+            await sincronizar(session, sesion_pjud, causa, progreso=progreso)
+        else:
+            sesion_publica = clase_publica(headless=settings.playwright_headless)
+            await sesion_publica.iniciar()
+            try:
+                await sincronizar(session, sesion_publica, causa, progreso=progreso)
+            finally:
+                await sesion_publica.cerrar()
+        return
+    except CausaNoEncontrada:
+        if not privada:
+            raise
+        logger.info("Causa %s no encontrada en la Consulta Unificada; se busca en Mis Causas", causa.id)
+
+    clase_privada = SESIONES_PRIVADAS[competencia]
+    rut = descifrar(job.rut_cifrado)
+    clave = descifrar(job.clave_cifrada)
+    sesion_privada = clase_privada(
+        rut, clave, job.metodo_login or clase_privada.METODO_CLAVE_PJUD, headless=settings.playwright_headless
+    )
+    abiertas["privada"] = sesion_privada
+    await progreso("Causa no encontrada en Consulta Unificada; buscando en Mis Causas")
+    await sesion_privada.iniciar()
+    await sincronizar(session, sesion_privada, causa, privada=True, progreso=progreso)
+
+
 async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
     async with AsyncSessionLocal() as session:
         job = await session.get(SyncJob, job_id)
@@ -161,6 +221,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
 
         privada = job.rut_cifrado is not None
         sesion_privada: PjudSessionPrivada | None = None
+        sesiones_abiertas: dict = {}
         progreso = functools.partial(_reportar_progreso, causa_id, competencia)
 
         try:
@@ -175,84 +236,10 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
                 await progreso("Iniciando sesion en la Oficina Judicial Virtual")
                 await sesion_privada.iniciar()
                 await sincronizar_causa_familia(session, sesion_privada, causa, progreso=progreso)
-            elif competencia == "laboral" and privada:
-                rut = descifrar(job.rut_cifrado)
-                clave = descifrar(job.clave_cifrada)
-                sesion_privada = PjudSessionLaboralPrivada(
-                    rut, clave, job.metodo_login or PjudSessionLaboralPrivada.METODO_CLAVE_PJUD,
-                    headless=settings.playwright_headless,
-                )
-                await progreso("Iniciando sesion en la Oficina Judicial Virtual")
-                await sesion_privada.iniciar()
-                await sincronizar_causa_laboral(session, sesion_privada, causa, privada=True, progreso=progreso)
-            elif competencia == "laboral":
-                # A diferencia de civil (que reusa el `sesion_pjud` compartido y de
-                # larga duracion de `run()`), la sync publica de laboral abre su propia
-                # sesion por job: `sesion_pjud` es un `PjudSessionAsync` de clase fija
-                # (ids de popup de civil) y los ids de Laboral son atributos de clase
-                # de `PjudSessionLaboralAsync`, asi que no se puede reusar la instancia
-                # sin cambiarle la clase en caliente. El costo (relanzar el navegador
-                # por job) es el mismo que ya paga toda sync privada.
-                sesion_laboral_publica = PjudSessionLaboralAsync(headless=settings.playwright_headless)
-                await sesion_laboral_publica.iniciar()
-                try:
-                    await sincronizar_causa_laboral(session, sesion_laboral_publica, causa, progreso=progreso)
-                finally:
-                    await sesion_laboral_publica.cerrar()
-            elif competencia == "cobranza" and privada:
-                # NO CONFIRMADO en vivo (ver docstring de `PjudSessionCobranzaPrivada`):
-                # ids de "Mis Causas" -> Cobranza extrapolados por analogia, sin ejemplo
-                # real disponible.
-                rut = descifrar(job.rut_cifrado)
-                clave = descifrar(job.clave_cifrada)
-                sesion_privada = PjudSessionCobranzaPrivada(
-                    rut, clave, job.metodo_login or PjudSessionCobranzaPrivada.METODO_CLAVE_PJUD,
-                    headless=settings.playwright_headless,
-                )
-                await progreso("Iniciando sesion en la Oficina Judicial Virtual")
-                await sesion_privada.iniciar()
-                await sincronizar_causa_cobranza(session, sesion_privada, causa, privada=True, progreso=progreso)
-            elif competencia == "cobranza":
-                # Misma razon que laboral publico: los ids de popup son atributos de
-                # clase de `PjudSessionCobranzaAsync`, no se puede reusar `sesion_pjud`.
-                sesion_cobranza_publica = PjudSessionCobranzaAsync(headless=settings.playwright_headless)
-                await sesion_cobranza_publica.iniciar()
-                try:
-                    await sincronizar_causa_cobranza(session, sesion_cobranza_publica, causa, progreso=progreso)
-                finally:
-                    await sesion_cobranza_publica.cerrar()
-            elif competencia == "penal" and privada:
-                # NO CONFIRMADO en vivo (ver docstring de `PjudSessionPenalPrivada`).
-                rut = descifrar(job.rut_cifrado)
-                clave = descifrar(job.clave_cifrada)
-                sesion_privada = PjudSessionPenalPrivada(
-                    rut, clave, job.metodo_login or PjudSessionPenalPrivada.METODO_CLAVE_PJUD,
-                    headless=settings.playwright_headless,
-                )
-                await progreso("Iniciando sesion en la Oficina Judicial Virtual")
-                await sesion_privada.iniciar()
-                await sincronizar_causa_penal(session, sesion_privada, causa, privada=True, progreso=progreso)
-            elif competencia == "penal":
-                # Misma razon que laboral/cobranza publicos: los ids de popup son
-                # atributos de clase de `PjudSessionPenalAsync`.
-                sesion_penal_publica = PjudSessionPenalAsync(headless=settings.playwright_headless)
-                await sesion_penal_publica.iniciar()
-                try:
-                    await sincronizar_causa_penal(session, sesion_penal_publica, causa, progreso=progreso)
-                finally:
-                    await sesion_penal_publica.cerrar()
-            elif privada:
-                rut = descifrar(job.rut_cifrado)
-                clave = descifrar(job.clave_cifrada)
-                sesion_privada = PjudSessionPrivada(
-                    rut, clave, job.metodo_login or PjudSessionPrivada.METODO_CLAVE_PJUD,
-                    headless=settings.playwright_headless,
-                )
-                await progreso("Iniciando sesion en la Oficina Judicial Virtual")
-                await sesion_privada.iniciar()
-                await sincronizar_causa(session, sesion_privada, causa, privada=True, progreso=progreso)
             else:
-                await sincronizar_causa(session, sesion_pjud, causa, progreso=progreso)
+                await _sincronizar_publica_luego_privada(
+                    session, sesion_pjud, job, causa, competencia, privada, progreso, sesiones_abiertas
+                )
 
             causa.estado_sync = "Completo"
             causa.fecha_ultima_sincronizacion = datetime.now(timezone.utc)
@@ -302,6 +289,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
                 _limpiar_credenciales(job)
             await session.commit()
         finally:
+            sesion_privada = sesion_privada or sesiones_abiertas.get("privada")
             if sesion_privada is not None:
                 try:
                     await sesion_privada.cerrar()

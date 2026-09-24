@@ -1,4 +1,4 @@
-el tribunal es distinto al de civil, debemos scrapear antes todos los tribunales de laboral y luego puedo obtener desde el endpoint
+el tribunal es distinto al de civil, debemos scrapear antes todos los tribunales de penal y luego puedo obtener desde el endpoint
 url : /catalogo/tribunales?competencia=penal
 
 
@@ -18,6 +18,17 @@ sincronizar_penal los campos rut, clave y metodo_login (1 = Clave Poder Judicial
 2 = Clave Unica). corte y tribunal se siguen enviando (solo forman parte de la clave
 de la causa; la busqueda privada filtra unicamente por Rit/Rol/Anio). Las credenciales
 se guardan cifradas en la cola y se borran cuando el job termina.
+{
+    "corte":90,
+    "tribunal": 387, 
+    "tipo": "Ordinaria", # ['Ordinaria','Exhorto','Administrativa','Extradición','Militar']
+    "rol": 1,
+    "anio": 2025,
+    "rut": "12345678-9",
+    "clave": "****",
+    "metodo_login": 1
+}
+
 {
     "corte":90,
     "tribunal": 387, 
