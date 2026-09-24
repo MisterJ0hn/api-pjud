@@ -15,7 +15,7 @@ corre esto:
     docker compose start worker
 
 Uso (en local, sin Docker):
-    python scripts/poblar_catalogo_tribunales.py [civil laboral cobranza]
+    python scripts/poblar_catalogo_tribunales.py [civil laboral cobranza penal]
 """
 
 import sys

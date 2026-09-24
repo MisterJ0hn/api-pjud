@@ -48,6 +48,18 @@ from api.db.models.laboral import (
     NotificacionLaboral,
     TextoDemandaLaboral,
 )
+from api.db.models.penal import (
+    CausaPenal,
+    CuadernoPenal,
+    DocumentoPenal,
+    HistoriaPenal,
+    HistoriaPenalAnexo,
+    HistoriaPenalDoc,
+    LitigantePenal,
+    NotificacionPenal,
+    NotificacionPenalGeoImagen,
+    RelacionPenal,
+)
 from api.db.models.movimientos import (
     EscritoResolver,
     Exhorto,
@@ -122,4 +134,14 @@ __all__ = [
     "DiligenciaCobranza",
     "LiquidacionCobranza",
     "DocumentoLaboralCobranza",
+    "CausaPenal",
+    "DocumentoPenal",
+    "CuadernoPenal",
+    "HistoriaPenal",
+    "HistoriaPenalDoc",
+    "HistoriaPenalAnexo",
+    "LitigantePenal",
+    "NotificacionPenal",
+    "NotificacionPenalGeoImagen",
+    "RelacionPenal",
 ]

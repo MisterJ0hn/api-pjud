@@ -11,6 +11,7 @@ from api.db.models.cobranza import CausaCobranza, DocumentoCobranza
 from api.db.models.documentos import Documento
 from api.db.models.familia import CausaFamilia, DocumentoFamilia
 from api.db.models.laboral import CausaLaboral, DocumentoLaboral
+from api.db.models.penal import CausaPenal, DocumentoPenal
 from api.db.session_async import get_session
 
 router = APIRouter(prefix="/public", tags=["documentos"])
@@ -279,6 +280,63 @@ async def _resolver_y_servir_imagen_cobranza(session: AsyncSession, causa_id: st
     return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
 
 
+async def _resolver_y_servir_penal(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    # Igual que Laboral: la columna "Doc." de Historia y el popup "Documentos Laboral"
+    # mezclan pdf/doc/docx -- no se puede asumir `.pdf` fijo.
+    nombre_archivo, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_DOCUMENTOS_MIXTOS.get(ext.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    try:
+        cid = uuid.UUID(causa_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    causa = (await session.execute(select(CausaPenal).where(CausaPenal.id == cid))).scalar_one_or_none()
+    if causa is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoPenal).where(
+                DocumentoPenal.causa_penal_id == causa.id,
+                DocumentoPenal.nombre_archivo == nombre_archivo,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
+
+
+async def _resolver_y_servir_imagen_penal(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
+    nombre, ext = os.path.splitext(nombre_con_ext)
+    media_type = _MIME_POR_EXTENSION.get(ext.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    try:
+        cid = uuid.UUID(causa_id)
+        documento_id = uuid.UUID(nombre)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    documento = (
+        await session.execute(
+            select(DocumentoPenal).where(
+                DocumentoPenal.id == documento_id,
+                DocumentoPenal.causa_penal_id == cid,
+            )
+        )
+    ).scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    return FileResponse(documento.ruta_archivo, media_type=media_type, filename=nombre_con_ext)
+
+
 async def _resolver_y_servir_audio_laboral(session: AsyncSession, causa_id: str, nombre_con_ext: str) -> FileResponse:
     nombre, ext = os.path.splitext(nombre_con_ext)
     media_type = _MIME_POR_EXTENSION.get(ext.lower())
@@ -328,6 +386,11 @@ async def imagen_cobranza(causa_id: str, nombre_con_ext: str, session: AsyncSess
     return await _resolver_y_servir_imagen_cobranza(session, causa_id, nombre_con_ext)
 
 
+@router.get("/penal/{causa_id}/img/{nombre_con_ext}")
+async def imagen_penal(causa_id: str, nombre_con_ext: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_imagen_penal(session, causa_id, nombre_con_ext)
+
+
 # Declaradas ANTES de las rutas civiles de 2 segmentos para que `/public/familia/<uuid>/<name>`
 # / `/public/laboral/<uuid>/<name>` / `/public/cobranza/<uuid>/<name>` no las agarre
 # `documento_cuaderno` con causa_id="familia"/"laboral"/"cobranza".
@@ -344,6 +407,11 @@ async def documento_laboral(causa_id: str, nombre_archivo: str, session: AsyncSe
 @router.get("/cobranza/{causa_id}/{nombre_archivo}")
 async def documento_cobranza(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
     return await _resolver_y_servir_cobranza(session, causa_id, nombre_archivo)
+
+
+@router.get("/penal/{causa_id}/{nombre_archivo}")
+async def documento_penal(causa_id: str, nombre_archivo: str, session: AsyncSession = Depends(get_session)):
+    return await _resolver_y_servir_penal(session, causa_id, nombre_archivo)
 
 
 @router.get("/{causa_id}/{nombre_archivo}")

@@ -8,7 +8,7 @@ Request:
 {
     "corte":90,
     "tribunal": 387, # el tribunal es distinto al de penal, debemos scrapear antes todos los tribunales de laboral
-    "tipo": "A",
+    "tipo": "Ordinaria",
     "rol": 1,
     "anio": 2025
 }
@@ -21,7 +21,7 @@ se guardan cifradas en la cola y se borran cuando el job termina.
 {
     "corte":90,
     "tribunal": 387, 
-    "tipo": "A",
+    "tipo": "Ordinaria", # ['Ordinaria','Exhorto','Administrativa','Extradición','Militar']
     "rol": 1,
     "anio": 2025,
     "rut": "12345678-9",
@@ -65,7 +65,7 @@ Request:
 {
     "corte":90,
     "tribunal": 387,
-    "tipo": "A",
+    "tipo": "Ordinaria",
     "rol": 1,
     "anio": 2025
 }
@@ -78,73 +78,30 @@ Response 200:
         "estado": "Sincronizando"|"Completo",
         "detalle_estado": "Obteniendo historia de cuaderno Principal", // paso actual mientras estado=Sincronizando; null cuando estado=Completo
         "fecha_ultima_sincronizacion": "2026-08-10",
-        "rit": "A-1-2025", #RIT
-        "caratula": "A.F.P. HABITAT S.A. CON CO", #nO TIENE TITULO EN EL MODAL, PERO ESTA AL LADO DEL RIT
-        "fecha_ingreso":"14/04/2025", #F. Ing.
+        "rol": "A-1-2025", #ROL
+        "fecha_ingreso":"14/04/2025", #Fecha Ingreso
+        "caratula": "A.F.P. HABITAT S.A. CON CO", #Caratulado.
         "ruc": "25- 3-0094727-4", #RUC
+        "estado_adm":"Sin archivar", #Est.Adm.
+        "procedimiento": "Ordinario", #Procedimiento
         "proceso": "Ejecutivo Obligación de Dar", #Proc.
         "forma_inicio":"Demanda", #Forma Inicio
-        "estado_proceso": "Tramitación", #Estado Proc.
+        "estado_proceso": "Tramitación", #Estado Procesal
         "etapa":"1 Notificación demanda y su proveído", #Etapa
-        "titulo_ejec":{
-            "nombre_archivo":"xxx",
-            "url": "https://api-pjud.temposoft.cl/public/titulo_ejec.pdf"
-        },
-        "juez_asignado":"AMERICA ANTONIA ROJAS ROJAS",
-        "tribunal":"Jdo. de Letras de Colina", #Tribunal
-        "doc_demanda":{
-            "nombre_archivo":"xxxx",
-            "ruta":"https://api-pjud.temposoft.cl/public/doc_demanda.pdf"
-        },
-        "anexos_causa": [
-            {
-                "fecha":"30/01/2026",
-                "referencia": "PAGARE",
-                "nombre_doc": "Anexos_causa", #nombre idenpotente
-                "doc":"https://api-pjud.temposoft.cl/public/ANEXO_CAUSA_.pdf"
-            },{
-                "fecha":"30/01/2026",
-                "referencia": "CONTRATO",
-                "nombre_doc": "Anexos_causa", #nombre idenpotente
-                "doc":"https://api-pjud.temposoft.cl/public/ANEXO_CAUSA_.pdf"
-            }
-        ],
-        "ebook":{
-            "nombre_archivo": "ebook", # debe ser un nombre IDEMPOTENTE
-            "url": "https://api-pjud.temposoft.cl/public/ebook.pdf"
-        },
-         "certificado_envio":{
-            "nombre_archivo": "certificado_envio", # debe ser un nombre IDEMPOTENTE
-            "url": "https://api-pjud.temposoft.cl/public/certificado_envio.pdf"
-        },
-        "documentos_laboral":{
-
-        },
-        "informacion_receptor":[
-            {
-                "cuaderno":"Principal",
-                "datos_retiro": "MARIA LORETO PIZARRO QUEZADA",
-                "fecha_retiro": "23/03/2026",
-                "estado":"Resuelta"
-            },
-            {
-                "cuaderno":"Apremio Ejecutivo Obligación de Dar",
-                "datos_retiro": "MARIA LORETO PIZARRO QUEZADA",
-                "fecha_retiro": "23/03/2026",
-                "estado":"Resuelta"
-            }
-        ],
+        "tribunal":"Juzgado de Letras y Garantía de Chile Chico", #Tribunal
+        "acumulada":"https://",
+        "certificado_envio":"https://"
         "cuadernos":[
             {
                 "id":1,
                 "nombre":"1 - principal",
-                "estado_proceso": "Tramitación", #Estado Proc.
+                "estado_proceso": "Tramitación", #Estado Procesal
                 "etapa":"1 Notificación demanda y su proveído", #Etapa
             },
             {
                 "id":2,
                 "nombre":"2 - Apremio Ejecutivo Obligación de Dar",
-                "estado_proceso": "Tramitación", #Estado Proc.
+                "estado_proceso": "Tramitación", #Estado Procesal
                 "etapa":"1 Notificación demanda y su proveído", #Etapa
             }
         ]
@@ -209,12 +166,11 @@ Response 200:
                     "referencia": "Mandato"
                 }
             ],
-            "etapa":"Mandamiento",
             "tramite":"Actuación Receptor",
             "descripcion_tramite": "NOTIFICACIÓN DE DEMANDA (Exitosa) Diligencia:07/04/2026 17:10",
-            "estado_firma":"Firmado",
             "fecha_tramite": "10/04/2026 (07/04/2026)",
-            "georref": []
+            "estado_firma":"Firmado",
+            "estado":"Cerrado"
         },
         {
             "folio": 21,
@@ -235,9 +191,61 @@ Response 200:
                     "ruta":"https://api-pjud.temposoft.cl/public/historia_folio1_tramite_1.pdf"
                 }
             },            
-            "estado_firma":"Firmado",
+             "tramite":"Actuación Receptor",
+            "descripcion_tramite": "NOTIFICACIÓN DE DEMANDA (Exitosa) Diligencia:07/04/2026 17:10",
             "fecha_tramite": "10/04/2026 (07/04/2026)",
-            "georref": { #en pjud es un link que abre un popup id=modalGeoReferenciaFamilia.
+            "estado_firma":"Firmado",
+            "estado":"Cerrado"
+        }
+    ],
+    "litigantes":[
+        {
+            "participantes": "Denunciado",
+            "persona":"Natural",
+            "razon_social":"LUIS ALBERTO VERA MAHUZIER (Poder Simple)"
+        },
+        {
+            "participantes": "Denunciado",
+            "persona":"Natural",
+            "razon_social":"SANCHEZ VALENCIA LEYDY TATIANA"
+        },
+        {
+            "participantes": "Fiscal",
+            "persona":"Natural",
+            "razon_social":"GENERICO TRIBUNAL 249 FISCAL"
+        }
+    ],
+    "notificaciones":[
+        {
+            "tipo_notificacion":"e-mail",
+            "estado_notificacion": "Realizada",
+            "fecha_notificacion":"25/04/2025",
+            "nombre":"NICOLÁS ALEJANDRO MUÑOZ FERNÁNDEZ",
+            "estampado": "",
+            "geo":{ #en pjud es un link que abre un popup id=modalGeoReferenciaFamilia.
+                "mapa" : { #se encuentra en la pestaña Mapas href="#mapasGeoRef"
+                    "latitud":"3", #id="latitud"
+                    "longitud":"33",#id="longitud"
+                    "corrector":"10" #id="corrector"
+                },
+                "imagenes":[ #se encuentra en la pestaña Imagenes href="#imagenesGeoRef"
+                    {
+                        "img":"https://api-pjud.temposoft.cl/public/GUID.[jpg|png|gif]" # en base de datos, para que no graba el nombre del archivo que esta en alt de img del popup, para que despues lo compares. La url quiero que sea un guid en vez del nombre.
+                    },
+                    {
+                        "img":"https://api-pjud.temposoft.cl/public/GUID.[jpg|png|gif]"
+                    } 
+                ],
+                "videos":[] # por el momento estará vacío. no encuentro ejemplos de que es lo que llega.
+            }
+        },
+        {
+            "tipo_notificacion":"e-mail",
+            "estado_notificacion": "Realizada",
+            "fecha_notificacion":"25/04/2025",
+            "nombre":"NICOLÁS ALEJANDRO MUÑOZ FERNÁNDEZ",
+            "estampado": "",
+            "geo":{ #en pjud es un link que abre un popup id=modalGeoReferenciaFamilia.
                 "mapa" : { #se encuentra en la pestaña Mapas href="#mapasGeoRef"
                     "latitud":"3", #id="latitud"
                     "longitud":"33",#id="longitud"
@@ -255,68 +263,14 @@ Response 200:
             }
         }
     ],
-    "litigantes":[
-        {
-            "sujeto": "AB.DDO",
-            "rut":"18101257-9",
-            "persona": "NATURAL",
-            "razon_social":"LUIS ALBERTO VERA MAHUZIER (Poder Simple)"
-        },
-        {
-            "sujeto": "AB.DTE",
-            "rut":"18431792-3",
-            "persona": "NATURAL",
-            "razon_social":"NICOLÁS ALEJANDRO MUÑOZ FERNÁNDEZ (Sin Acreditacion)"
-        },
-        {
-            "sujeto": "DTE",
-            "rut":"97030000-7",
-            "persona": "JURIDICA",
-            "razon_social":"BANCO DEL ESTADO D E CHILE"
-        }
-    ],
-    "notificaciones":[
-        {
-            "tipo_notificacion":"e-mail",
-            "estado_notificacion": "Realizada",
-            "fecha_notificacion":"25/04/2025",
-            "fecha_tramite": "30/04/2025",
-            "tramite":"resolución",
-            "tipo_part": "AB.DTE",
-            "nombre":"NICOLÁS ALEJANDRO MUÑOZ FERNÁNDEZ"
-        },
-        {
-            "tipo_notificacion":"e-mail",
-            "estado_notificacion": "Realizada",
-            "fecha_notificacion":"25/04/2025",
-            "fecha_tramite": "30/04/2025",
-            "tramite":"resolución",
-            "tipo_part": "AB.DTE",
-            "nombre":"NICOLÁS ALEJANDRO MUÑOZ FERNÁNDEZ"
-        }
-    ],
-    "diligencias":
+   
+    "Relaciones":
     [
         {
-            "doc_ida":"",
-            "doc_vta":"",
-            "estado_diligencia":"",
-            "rit":"",
-            "ruc":"",
-            "tipo_diligencia":"",
-            "fecha_tramite":"",
-            "destinatario":"",
-            "responsable":""            
-        }
-    ],
-    "liquidacion":
-    [
-        {
-            "liquidacion":"",
-            "fecha_liquidacion":"",
-            "cuaderno":"",
-            "estado":"",
-            "monto_liquido":""
+            "nombre":"NN",
+            "materia":"Injurias y calumnias por medios de comunicación social. Art. 29, ley 19.733. Libertad de opinión",
+            "estado_causa":"Concluida",
+            "fecha_cambio_estado":"02/01/2025"
         }
     ],
 

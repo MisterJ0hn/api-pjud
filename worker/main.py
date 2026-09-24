@@ -19,6 +19,7 @@ from api.db.models.causas import Causa
 from api.db.models.cobranza import CausaCobranza
 from api.db.models.familia import CausaFamilia
 from api.db.models.laboral import CausaLaboral
+from api.db.models.penal import CausaPenal
 from api.db.models.sync_job import SyncJob
 from api.db.session_async import AsyncSessionLocal
 from api.logging_config import configurar_logger
@@ -31,12 +32,15 @@ from scraper.pjud_client_async import (
     PjudSessionFamiliaPrivada,
     PjudSessionLaboralAsync,
     PjudSessionLaboralPrivada,
+    PjudSessionPenalAsync,
+    PjudSessionPenalPrivada,
     PjudSessionPrivada,
 )
 from worker.sync_civil import sincronizar_causa
 from worker.sync_cobranza import sincronizar_causa_cobranza
 from worker.sync_familia import sincronizar_causa_familia
 from worker.sync_laboral import sincronizar_causa_laboral
+from worker.sync_penal import sincronizar_causa_penal
 
 logger = configurar_logger("pjud.worker", "worker.log")
 
@@ -47,7 +51,13 @@ MAX_INTENTOS = 2
 # "civil" | "familia" | "laboral" | "cobranza" -- que causa apunta el job (ver
 # `SyncJob`, XOR de las 4 columnas causa_id/causa_familia_id/causa_laboral_id/
 # causa_cobranza_id).
-COMPETENCIA_MODELO = {"civil": Causa, "familia": CausaFamilia, "laboral": CausaLaboral, "cobranza": CausaCobranza}
+COMPETENCIA_MODELO = {
+    "civil": Causa,
+    "familia": CausaFamilia,
+    "laboral": CausaLaboral,
+    "cobranza": CausaCobranza,
+    "penal": CausaPenal,
+}
 
 
 def _competencia_job(job: SyncJob) -> str:
@@ -57,6 +67,8 @@ def _competencia_job(job: SyncJob) -> str:
         return "laboral"
     if job.causa_cobranza_id is not None:
         return "cobranza"
+    if job.causa_penal_id is not None:
+        return "penal"
     return "civil"
 
 
@@ -67,6 +79,8 @@ def _causa_id_job(job: SyncJob, competencia: str):
         return job.causa_laboral_id
     if competencia == "cobranza":
         return job.causa_cobranza_id
+    if competencia == "penal":
+        return job.causa_penal_id
     return job.causa_id
 
 
@@ -207,6 +221,26 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
                     await sincronizar_causa_cobranza(session, sesion_cobranza_publica, causa, progreso=progreso)
                 finally:
                     await sesion_cobranza_publica.cerrar()
+            elif competencia == "penal" and privada:
+                # NO CONFIRMADO en vivo (ver docstring de `PjudSessionPenalPrivada`).
+                rut = descifrar(job.rut_cifrado)
+                clave = descifrar(job.clave_cifrada)
+                sesion_privada = PjudSessionPenalPrivada(
+                    rut, clave, job.metodo_login or PjudSessionPenalPrivada.METODO_CLAVE_PJUD,
+                    headless=settings.playwright_headless,
+                )
+                await progreso("Iniciando sesion en la Oficina Judicial Virtual")
+                await sesion_privada.iniciar()
+                await sincronizar_causa_penal(session, sesion_privada, causa, privada=True, progreso=progreso)
+            elif competencia == "penal":
+                # Misma razon que laboral/cobranza publicos: los ids de popup son
+                # atributos de clase de `PjudSessionPenalAsync`.
+                sesion_penal_publica = PjudSessionPenalAsync(headless=settings.playwright_headless)
+                await sesion_penal_publica.iniciar()
+                try:
+                    await sincronizar_causa_penal(session, sesion_penal_publica, causa, progreso=progreso)
+                finally:
+                    await sesion_penal_publica.cerrar()
             elif privada:
                 rut = descifrar(job.rut_cifrado)
                 clave = descifrar(job.clave_cifrada)

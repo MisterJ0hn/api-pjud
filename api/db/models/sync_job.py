@@ -33,6 +33,9 @@ class SyncJob(Base):
     causa_cobranza_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("causas_cobranza.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    causa_penal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("causas_penal.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     estado: Mapped[str] = mapped_column(String(15), nullable=False, default="pendiente")
     intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_mensaje: Mapped[str | None] = mapped_column(String(2000), nullable=True)
@@ -54,7 +57,8 @@ class SyncJob(Base):
             "(CASE WHEN causa_id IS NOT NULL THEN 1 ELSE 0 END) "
             "+ (CASE WHEN causa_familia_id IS NOT NULL THEN 1 ELSE 0 END) "
             "+ (CASE WHEN causa_laboral_id IS NOT NULL THEN 1 ELSE 0 END) "
-            "+ (CASE WHEN causa_cobranza_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
+            "+ (CASE WHEN causa_cobranza_id IS NOT NULL THEN 1 ELSE 0 END) "
+            "+ (CASE WHEN causa_penal_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
             name="ck_sync_job_una_causa",
         ),
     )

@@ -6,6 +6,7 @@ from api.civil.router import router as civil_router
 from api.cobranza.router import router as cobranza_router
 from api.familia.router import router as familia_router
 from api.laboral.router import router as laboral_router
+from api.penal.router import router as penal_router
 from api.errors.handlers import registrar_exception_handlers
 from api.logging_config import configurar_logger
 from api.public_docs.router import router as public_docs_router
@@ -22,6 +23,7 @@ app.include_router(civil_router)
 app.include_router(cobranza_router)
 app.include_router(familia_router)
 app.include_router(laboral_router)
+app.include_router(penal_router)
 app.include_router(public_docs_router)
 
 

@@ -9,7 +9,7 @@ from api.errors.exceptions import CampoInvalidoError
 
 router = APIRouter(tags=["catalogo"])
 
-COMPETENCIAS_VALIDAS = ("civil", "laboral", "cobranza")
+COMPETENCIAS_VALIDAS = ("civil", "laboral", "cobranza", "penal")
 
 
 @router.get("/catalogo/tribunales", response_model=CatalogoTribunalesResponse)

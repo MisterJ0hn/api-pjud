@@ -23,12 +23,14 @@ BASE_URL = "https://oficinajudicialvirtual.pjud.cl/includes/sesion-consultaunifi
 COMPETENCIAS = {
     "civil": "3",
     "laboral": "4",
+    "penal": "5",
     "cobranza": "6",
 }
 
 LIBRO_TIPO = {
     "civil": ["C", "V", "E", "A", "F", "I"],
     "laboral": ["O", "T", "M", "E", "S", "U", "V", "I"],
+    "penal": ["Ordinaria", "Exhorto", "Administrativa", "Extradición", "Militar"],
     "cobranza": ["A", "C", "D", "E", "J", "L", "P", "R"],
 }
 

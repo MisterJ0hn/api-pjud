@@ -58,7 +58,7 @@ BASE_URL = "https://oficinajudicialvirtual.pjud.cl/includes/sesion-consultaunifi
 HOME_URL = "https://oficinajudicialvirtual.pjud.cl/home/"
 INDEX_PRIVADO_URL = "https://oficinajudicialvirtual.pjud.cl/indexN.php"
 
-COMPETENCIAS = {"civil": "3", "laboral": "4", "cobranza": "6"}
+COMPETENCIAS = {"civil": "3", "laboral": "4", "penal": "5", "cobranza": "6"}
 
 PAUSA_ENTRE_CONSULTAS_MS = 4000
 
@@ -75,14 +75,14 @@ def _normalizar_tribunal(nombre: str | None) -> str:
 # en el 18º Juzgado Civil de Santiago); hay que elegir la del tribunal buscado y no la
 # primera. La ultima columna de la tabla es "Tribunal".
 JS_SELECCIONAR_FILA_RIT = """(args) => {
-    const {objetivo, tribunal} = args;
+    const {objetivo, tribunal, sufijo} = args;
     const norm = s => (s || '').toLowerCase().replace(/\\u00ba/g, '\\u00b0').replace(/\\s+/g, ' ').trim();
     const tribCol = tr => {
         const tds = Array.from(tr.querySelectorAll('td'));
         return tds.length ? tds[tds.length - 1].textContent.trim() : '';
     };
     const candidatas = Array.from(document.querySelectorAll('#busRit td'))
-        .filter(td => td.textContent.trim() === objetivo)
+        .filter(td => sufijo ? td.textContent.trim().endsWith(sufijo) : td.textContent.trim() === objetivo)
         .map(td => td.closest('tr'))
         .filter(Boolean);
     if (!candidatas.length) return {estado: 'no_encontrada'};
@@ -338,6 +338,23 @@ class _PjudModalScraper:
     # sesion/cookies sean validas -- el link es un `<a href=... download="">`, que solo
     # dispara la descarga nativa del navegador con un click de verdad.
     MODALES_DESCARGA_CLICK: frozenset[str] = frozenset()
+    # Popup de Georreferencia en la pestana de Notificaciones (Penal); None = no aplica.
+    MODAL_GEOREFERENCIA_NOTIF: str | None = None
+    PREFIJOS_NOTIF_GEO: tuple[str, ...] = ("notificac",)
+    # Ganchos de busqueda (Penal los sobreescribe): valor del select de tipo en la
+    # Consulta Unificada, texto que identifica la fila de la causa en los resultados
+    # (`sufijo` = la fila termina en ese texto, en vez de igualdad exacta con RIT), y
+    # radio "buscar por RIT" que hay que activar tras elegir la competencia.
+    RADIO_RIT: str | None = None
+
+    def _valor_tipo_publico(self, tipo: str) -> str:
+        return tipo
+
+    def _criterio_fila_publica(self, tipo: str, rol, anio) -> tuple[str, str | None]:
+        return f"{tipo}-{rol}-{anio}", None
+
+    def _texto_fila_privada(self, tipo: str, rol, anio) -> str:
+        return f"{tipo}-{rol}-{anio}"
 
     async def _reportar(self, texto: str) -> None:
         if self._progreso is None:
@@ -620,6 +637,8 @@ class _PjudModalScraper:
                     await self._extraer_georeferencia_popup_historia(pane_id, seccion)
             elif _es_seccion_historia(tab["nombre"], self.PREFIJOS_ANEXO_POPUP_EXTRA):
                 await self._extraer_anexos_popup_historia(pane_id, seccion)
+            elif self.MODAL_GEOREFERENCIA_NOTIF and _es_seccion_historia(tab["nombre"], self.PREFIJOS_NOTIF_GEO):
+                await self._extraer_georeferencia_popup_historia(pane_id, seccion, self.MODAL_GEOREFERENCIA_NOTIF)
             secciones[tab["nombre"]] = seccion
         return secciones
 
@@ -715,7 +734,9 @@ class _PjudModalScraper:
             )
             await page.wait_for_timeout(300)
 
-    async def _extraer_georeferencia_popup_historia(self, pane_id: str, seccion: dict) -> None:
+    async def _extraer_georeferencia_popup_historia(
+        self, pane_id: str, seccion: dict, popup_id: str | None = None
+    ) -> None:
         """La columna "Georeferencia" de Historia/Movimientos (solo Familia por ahora,
         `self.MODAL_GEOREFERENCIA`) abre un popup con 3 pestanas: Mapas (`#mapasGeoRef`,
         inputs `#latitud`/`#longitud`/`#corrector`), Imagenes (`#imagenesGeoRef`, `<img
@@ -729,7 +750,7 @@ class _PjudModalScraper:
         contenido en la celda "Georeferencia" para que el hash de la fila (worker)
         detecte cambios."""
         page = self._page
-        popup_id = self.MODAL_GEOREFERENCIA
+        popup_id = popup_id or self.MODAL_GEOREFERENCIA
         popup_href = f"#{popup_id}"
         filas = seccion.get("filas", [])
         for idx, fila in enumerate(filas):
@@ -934,6 +955,15 @@ class PjudSessionAsync(_PjudModalScraper):
         await self._ensure_rit_tab()
         await page.select_option("#competencia", COMPETENCIAS[competencia])
         await page.wait_for_timeout(400)
+        if self.RADIO_RIT:
+            try:
+                await page.evaluate(
+                    "(id) => { const r = document.getElementById(id); if (r && !r.checked) r.click(); }",
+                    self.RADIO_RIT,
+                )
+                await page.wait_for_timeout(300)
+            except Exception:
+                logger.warning("No se pudo activar el radio %s", self.RADIO_RIT)
         await page.select_option("#conCorte", corte)
         await page.wait_for_function(
             "document.querySelectorAll('#conTribunal option').length > 1", timeout=15000
@@ -988,7 +1018,7 @@ class PjudSessionAsync(_PjudModalScraper):
                 "#conTribunal",
                 "el => el.selectedOptions.length ? el.selectedOptions[0].textContent.trim() : ''",
             )
-            await page.select_option("#conTipoCausa", tipo)
+            await page.select_option("#conTipoCausa", self._valor_tipo_publico(tipo))
             await page.fill("#conRolCausa", str(rol))
             await page.fill("#conEraCausa", str(anio))
             await page.click('#busRit button[type="submit"]')
@@ -999,12 +1029,12 @@ class PjudSessionAsync(_PjudModalScraper):
             # reintenta la lectura varias veces antes de darla por buena (confirmado con
             # C-49-2026: no encontrada en produccion, encontrada de inmediato en un retest
             # manual).
-            objetivo = f"{tipo}-{rol}-{anio}"
+            objetivo, sufijo = self._criterio_fila_publica(tipo, rol, anio)
             seleccion = None
             for intento, espera_ms in enumerate((1500, 1500, 2000, 2000)):
                 await page.wait_for_timeout(espera_ms)
                 seleccion = await page.evaluate(
-                    JS_SELECCIONAR_FILA_RIT, {"objetivo": objetivo, "tribunal": tribunal_esperado}
+                    JS_SELECCIONAR_FILA_RIT, {"objetivo": objetivo, "tribunal": tribunal_esperado, "sufijo": sufijo}
                 )
                 if seleccion["estado"] != "no_encontrada":
                     break
@@ -1090,6 +1120,9 @@ class PjudSessionPrivada(_PjudModalScraper):
     CAMPO_ANIO = "anhoMisCauCiv"
     CAMPO_ESTADO = "estadoCausaMisCauCiv"
     BTN_BUSCAR = "btnConsultaMisCauCiv"
+    # True = el select de tipo de "Mis Causas" se elige por su texto visible (Penal:
+    # "Ordinaria", "Exhorto", ...) en vez de por value.
+    TIPO_POR_LABEL = False
 
     def __init__(self, rut: str, clave: str, metodo_login: int, headless: bool = False):
         self._rut = rut
@@ -1263,7 +1296,10 @@ class PjudSessionPrivada(_PjudModalScraper):
             await self._activar_filtros()
 
             try:
-                await page.select_option(f"#{self.CAMPO_TIPO}", value=tipo)
+                if self.TIPO_POR_LABEL:
+                    await page.select_option(f"#{self.CAMPO_TIPO}", label=tipo)
+                else:
+                    await page.select_option(f"#{self.CAMPO_TIPO}", value=tipo)
             except Exception:
                 logger.warning("No se pudo seleccionar el tipo '%s' en #%s", tipo, self.CAMPO_TIPO)
             await page.fill(f"#{self.CAMPO_ROL}", str(rol))
@@ -1287,7 +1323,7 @@ class PjudSessionPrivada(_PjudModalScraper):
             await page.click(f"#{self.BTN_BUSCAR}")
             await page.wait_for_timeout(3500)
 
-            objetivo = f"{tipo}-{rol}-{anio}"
+            objetivo = self._texto_fila_privada(tipo, rol, anio)
             abierta = await page.evaluate(
                 """([objetivo, paneId]) => {
                     const norm = s => (s || '').replace(/\\s+/g, '').toUpperCase();
@@ -1515,3 +1551,66 @@ class PjudSessionCobranzaPrivada(PjudSessionPrivada):
     PREFIJOS_HISTORIA = ("historia",)
     MODAL_GEOREFERENCIA = "modalGeoReferenciaCobranza"
     PREFIJOS_ANEXO_POPUP_EXTRA = ()
+
+
+class PjudSessionPenalAsync(PjudSessionAsync):
+    """Igual que `PjudSessionAsync` (Consulta Unificada publica) para la competencia Penal.
+
+    CONFIRMADO en vivo (2026-09-24): competencia Penal = value "5" del select
+    `#competencia`; `#conTipoCausa` trae 1:Ordinaria 2:Exhorto 3:Administrativa
+    4:Extradicion 5:Militar; el formulario tiene los radios `#radioRitPenal` /
+    `#radioRucPenal`.
+
+    NO CONFIRMADO (no hay ejemplos HTML de una causa Penal en este repo): la fila de
+    resultados se identifica por "-rol-anio" al final del texto de la celda (no se sabe
+    con que letra la muestra PJUD), y los ids del modal de detalle/popups de abajo son
+    extrapolados por analogia con Cobranza/Familia (sufijo "Pen"/"Penal"). Ajustar
+    contra una sesion real. Las pestanas se detectan por nombre (Historia / Litigantes o
+    Intervinientes / Notificaciones / Relaciones), no por id.
+    """
+
+    RADIO_RIT = "radioRitPenal"
+    MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoPenal", "modalAnexoSolicitudPenal")
+    PREFIJOS_HISTORIA = ("historia",)
+    MODAL_GEOREFERENCIA = "modalGeoReferenciaPenal"
+    MODAL_GEOREFERENCIA_NOTIF = "modalGeoReferenciaPenal"
+    PREFIJOS_ANEXO_POPUP_EXTRA = ()
+
+    def _valor_tipo_publico(self, tipo: str) -> str:
+        from api.penal.urls import valor_select_tipo_penal
+
+        return valor_select_tipo_penal(tipo) or tipo
+
+    def _criterio_fila_publica(self, tipo: str, rol, anio) -> tuple[str, str | None]:
+        return f"-{rol}-{anio}", f"-{rol}-{anio}"
+
+
+class PjudSessionPenalPrivada(PjudSessionPrivada):
+    """Igual que `PjudSessionPrivada` pero para la pestana "Penal" de Mis Causas.
+
+    NO CONFIRMADO EN VIVO: ids extrapolados por analogia con Civil (tab3) / Laboral
+    (tab4) / Familia (tab7): Penal = competencia 5 -> `tab5`, y el patron "MisCau" +
+    sufijo de competencia ("Pen"). Revisar contra el sitio real antes de confiar en
+    sincronizaciones privadas de Penal.
+    """
+
+    NOMBRE_COMPETENCIA = "Penal"
+    TAB_COMPETENCIA = "penalTab"
+    PANE_COMPETENCIA = "tab5"
+    CHECK_FILTROS = "filtroMisCauPen"
+    CAMPO_TIPO = "tipoMisCauPen"
+    CAMPO_ROL = "rolMisCauPen"
+    CAMPO_ANIO = "anhoMisCauPen"
+    CAMPO_ESTADO = "estadoCausaMisCauPen"
+    BTN_BUSCAR = "btnConsultaMisCauPen"
+    MODAL_DETALLE = "modalDetalleMisCauPenal"
+    TIPO_POR_LABEL = True
+
+    MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoPenal", "modalAnexoSolicitudPenal")
+    PREFIJOS_HISTORIA = ("historia",)
+    MODAL_GEOREFERENCIA = "modalGeoReferenciaPenal"
+    MODAL_GEOREFERENCIA_NOTIF = "modalGeoReferenciaPenal"
+    PREFIJOS_ANEXO_POPUP_EXTRA = ()
+
+    def _texto_fila_privada(self, tipo: str, rol, anio) -> str:
+        return f"-{rol}-{anio}"
