@@ -45,7 +45,6 @@ from worker.idempotencia import (
     colores_columna,
     extension_por_content_type,
     hash_fila,
-    refrescar_colores_docs_anexos,
     ruta_documento,
 )
 from worker.sync_civil import _archivo_en_disco, _normalizar, _parsear_folio
@@ -64,6 +63,50 @@ def _campo(campos: dict, *claves: str) -> str | None:
 def _es_seccion(nombre: str, *prefijos: str) -> bool:
     n = _normalizar(nombre)
     return any(n.startswith(p) for p in prefijos)
+
+
+_NOMBRES_COL_DOC = ("doc", "documento", "documentos")
+
+
+def _docs_fila(fila: dict, nombres: tuple[str, ...] = _NOMBRES_COL_DOC) -> list[dict]:
+    """Documentos de la columna "Doc." de una fila de Historia, en orden: primero los
+    links GET (`enlaces`) y luego los forms POST (`posts`). La columna se busca por nombre
+    normalizado (con o sin punto: "Doc.", "Doc", "Documento") porque en Penal no hay HTML
+    de ejemplo con el nombre exacto. Cada item: {"url", "post", "color"}."""
+    enlaces = fila.get("enlaces") or {}
+    posts = fila.get("posts") or {}
+    colores = fila.get("colores") or {}
+    colores_posts = fila.get("colores_posts") or {}
+
+    def _clave(dic):
+        return next((k for k, v in dic.items() if v and _normalizar(k).rstrip(". ") in nombres), None)
+
+    items: list[dict] = []
+    k = _clave(enlaces)
+    if k:
+        for i, url in enumerate(enlaces[k]):
+            items.append({"url": url, "post": None, "color": color_en(colores.get(k), i)})
+    kp = _clave(posts)
+    if kp:
+        for i, post in enumerate(posts[kp]):
+            items.append({"url": None, "post": post, "color": color_en(colores_posts.get(kp), i)})
+    return items
+
+
+async def _refrescar_colores_historia(session: AsyncSession, movimiento_id, fila: dict) -> None:
+    """Como `refrescar_colores_docs_anexos` pero con la busqueda tolerante de la columna
+    de docs de Penal."""
+    for modelo, colores in (
+        (HistoriaPenalDoc, [d["color"] for d in _docs_fila(fila)]),
+        (HistoriaPenalAnexo, colores_anexos_fila(fila)),
+    ):
+        if not colores:
+            continue
+        rows = (await session.execute(select(modelo).where(modelo.movimiento_id == movimiento_id))).scalars().all()
+        for r in rows:
+            nuevo = color_en(colores, r.orden - 1)
+            if r.color != nuevo:
+                r.color = nuevo
 
 
 def _categoria_descarga_cabecera(label: str) -> str | None:
@@ -172,10 +215,9 @@ def _separar_descripcion_tramite(valores: dict, enlaces: dict) -> tuple[str | No
 
 
 def _asignar_campos_historia(mov: HistoriaPenal, valores: dict, descripcion_tramite: str | None) -> None:
-    mov.etapa = _campo(valores, "Etapa")
     mov.tramite = _campo(valores, "Trámite", "Tramite")
     mov.descripcion_tramite = descripcion_tramite
-    mov.estado_firma = _campo(valores, "Estado Firma", "Firma", "Firmado")
+    mov.fecha_firma = _campo(valores, "Fecha Firma", "Fec. Firma", "Fecha de Firma", "F. Firma")
     mov.estado = _campo(valores, "Estado")
     mov.fecha_tramite = _campo(valores, "Fec. Trámite", "Fecha Trámite", "Fec. Tramite", "Fecha Tramite")
 
@@ -201,16 +243,24 @@ async def _persistir_docs_anexos_historia(
             colores_columna(fila, "Desc. Trámite", "Desc. Tramite"), 0
         )
 
-    doc_urls = enlaces.get("Doc.") or []
-    if doc_urls:
+    docs = _docs_fila(fila)
+    if not docs:
+        # Diagnostico: si la fila no trajo documentos, deja registradas las columnas con
+        # enlaces para poder ajustar el nombre de la columna contra el sitio real.
+        logger.debug(
+            "Historia %s sin docs; columnas con enlaces=%s posts=%s",
+            clave_base, list((fila.get("enlaces") or {}).keys()), list((fila.get("posts") or {}).keys()),
+        )
+    else:
         await session.execute(delete(HistoriaPenalDoc).where(HistoriaPenalDoc.movimiento_id == mov.id))
-        for i, url in enumerate(doc_urls, start=1):
+        for i, d in enumerate(docs, start=1):
             clave = clave_base if i == 1 else f"{clave_base}_doc{i}"
-            doc = await _obtener_o_descargar_doc(session, sesion_pjud, causa.id, "historia", clave, url, hash_padre=h)
+            doc = await _obtener_o_descargar_doc(
+                session, sesion_pjud, causa.id, "historia", clave, d["url"], post=d["post"], hash_padre=h
+            )
             session.add(
                 HistoriaPenalDoc(
-                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
-                    color=color_en(colores_columna(fila, "Doc."), i - 1),
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i, color=d["color"],
                 )
             )
 
@@ -338,10 +388,22 @@ async def _sincronizar_historia(
                 )
             ).scalar_one_or_none()
 
-            if existente is not None and existente.hash_contenido == h:
+            # Si la fila trae documentos pero aun no hay ninguno guardado (p. ej. sync
+            # anterior a que se resolviera la columna "Doc."), se reprocesa aunque el hash
+            # no haya cambiado.
+            faltan_docs = False
+            if existente is not None and _docs_fila(fila):
+                faltan_docs = (
+                    await session.execute(
+                        select(HistoriaPenalDoc.id)
+                        .where(HistoriaPenalDoc.movimiento_id == existente.id, HistoriaPenalDoc.documento_id.is_not(None))
+                        .limit(1)
+                    )
+                ).first() is None
+            if existente is not None and existente.hash_contenido == h and not faltan_docs:
                 if existente.orden != idx:
                     existente.orden = idx
-                await refrescar_colores_docs_anexos(session, existente.id, fila, HistoriaPenalDoc, HistoriaPenalAnexo)
+                await _refrescar_colores_historia(session, existente.id, fila)
                 mov_color = colores_columna(fila, "Desc. Trámite", "Desc. Tramite")
                 if mov_color and existente.descripcion_tramite_doc_id:
                     existente.descripcion_tramite_doc_color = color_en(mov_color, 0)
@@ -398,7 +460,6 @@ async def _reemplazar_litigantes(session: AsyncSession, causa: CausaPenal, cuade
             LitigantePenal(
                 causa_penal_id=causa.id,
                 participantes=_campo(v, "Participante(s)", "Participantes", "Participante", "Sujeto"),
-                rut=_campo(v, "Rut", "RUT"),
                 persona=_campo(v, "Persona"),
                 razon_social=_campo(v, "Nombre o Razón Social", "Razón Social", "Nombre"),
             )
@@ -423,7 +484,6 @@ async def _reemplazar_notificaciones(
             estado_notificacion=_campo(v, "Est.Not.", "Estado Notif.", "Estado Notificación", "Estado"),
             fecha_notificacion=_campo(v, "Fec.Not.", "Fecha Notif.", "Fecha Notificación", "Fecha"),
             nombre=_campo(v, "Nombre"),
-            estampado=_campo(v, "Estampado"),
             contenido_hash=h,
         )
         datos = fila.get("georeferencia_popup")
@@ -432,6 +492,14 @@ async def _reemplazar_notificaciones(
             notif.geo_latitud = mapa.get("latitud")
             notif.geo_longitud = mapa.get("longitud")
             notif.geo_corrector = mapa.get("corrector")
+        estampados = _docs_fila(fila, ("estampado",))
+        if estampados:
+            e = estampados[0]
+            doc_e = await _obtener_o_descargar_doc(
+                session, sesion_pjud, causa.id, "notificacion_estampado", f"notif{i}_estampado",
+                url=e["url"], post=e["post"], hash_padre=h,
+            )
+            notif.estampado_doc_id = doc_e.id if doc_e else None
         session.add(notif)
         await session.flush()
         for j, img in enumerate((datos or {}).get("imagenes") or [], start=1):
@@ -513,12 +581,21 @@ async def sincronizar_causa_penal(
     cabecera = resultado["cabecera"]
     campos = cabecera.get("campos", {})
     logger.info("Cabecera penal (campos crudos): %r", campos)
-    causa.rit = _campo(campos, "Rol", "ROL", "RIT", "Rit") or causa.rit
-    causa.caratula = _campo(campos, "Caratulado", "Carátula", "Caratula") or causa.caratula
-    causa.ruc = _campo(campos, "RUC", "Ruc") or causa.ruc
+    # Confirmado en vivo: la primera celda de la cabecera trae "ROL: O-3-2024 / RUC:
+    # 2301435259-7" junta, asi que el campo "ROL" llega como "O-3-2024 / RUC: 2301435259-7".
+    rol_crudo = _campo(campos, "ROL", "Rol", "RIT", "Rit")
+    ruc_cabecera = None
+    if rol_crudo:
+        partes = re.split(r"\s*/\s*RUC\s*:\s*", rol_crudo, maxsplit=1, flags=re.IGNORECASE)
+        causa.rit = partes[0].strip() or causa.rit
+        if len(partes) > 1:
+            ruc_cabecera = partes[1].strip() or None
+    causa.caratula = _campo(campos, "Caratulado.", "Caratulado", "Carátula", "Caratula") or causa.caratula
+    causa.ruc = _campo(campos, "RUC", "Ruc") or ruc_cabecera or causa.ruc
     causa.fecha_ingreso = _campo(campos, "Fecha Ingreso", "Fecha Ing.", "F. Ing.") or causa.fecha_ingreso
     causa.estado_adm = _campo(campos, "Est.Adm.", "Est. Adm.", "Estado Administrativo") or causa.estado_adm
     causa.procedimiento = _campo(campos, "Procedimiento") or causa.procedimiento
+    causa.ubicacion = _campo(campos, "Ubicación", "Ubicacion") or causa.ubicacion
     causa.proceso = _campo(campos, "Proc.", "Proceso") or causa.proceso
     causa.forma_inicio = _campo(campos, "Forma Inicio", "Forma Inicio.", "F. Inicio") or causa.forma_inicio
     causa.estado_proceso = _campo(campos, "Estado Procesal", "Estado Proc.") or causa.estado_proceso

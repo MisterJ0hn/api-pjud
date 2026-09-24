@@ -77,11 +77,19 @@ def _normalizar_tribunal(nombre: str | None) -> str:
 JS_SELECCIONAR_FILA_RIT = """(args) => {
     const {objetivo, tribunal, sufijo} = args;
     const norm = s => (s || '').toLowerCase().replace(/\\u00ba/g, '\\u00b0').replace(/\\s+/g, ' ').trim();
+    // Columna "Tribunal" por header (Penal la trae en 2a posicion y termina en "Estado
+    // Causa"); si no hay header "Tribunal", la ultima columna (civil/laboral/cobranza).
     const tribCol = tr => {
         const tds = Array.from(tr.querySelectorAll('td'));
-        return tds.length ? tds[tds.length - 1].textContent.trim() : '';
+        if (!tds.length) return '';
+        const tbl = tr.closest('table');
+        const hs = tbl ? Array.from(tbl.querySelectorAll('thead th, tr:first-child th'))
+            .map(h => h.textContent.trim().toLowerCase()) : [];
+        let i = hs.indexOf('tribunal');
+        if (i < 0 || i >= tds.length) i = tds.length - 1;
+        return tds[i].textContent.trim();
     };
-    const candidatas = Array.from(document.querySelectorAll('#busRit td'))
+    const candidatas = Array.from(document.querySelectorAll('#busRit td, #dtaTableDetalle td'))
         .filter(td => sufijo ? td.textContent.trim().endsWith(sufijo) : td.textContent.trim() === objetivo)
         .map(td => td.closest('tr'))
         .filter(Boolean);
@@ -346,6 +354,8 @@ class _PjudModalScraper:
     # (`sufijo` = la fila termina en ese texto, en vez de igualdad exacta con RIT), y
     # radio "buscar por RIT" que hay que activar tras elegir la competencia.
     RADIO_RIT: str | None = None
+    # Boton "Buscar" de la Consulta Unificada (en Penal no cuelga de #busRit).
+    BTN_BUSCAR_PUBLICO = '#busRit button[type="submit"]'
 
     def _valor_tipo_publico(self, tipo: str) -> str:
         return tipo
@@ -755,10 +765,16 @@ class _PjudModalScraper:
         filas = seccion.get("filas", [])
         for idx, fila in enumerate(filas):
             popups = fila.get("popups") or {}
-            match = next(
-                (col for col, lst in popups.items() if popup_href in lst),
-                None,
-            )
+            match = None
+            for col, lst in popups.items():
+                for href in lst:
+                    # Penal: no hay ejemplo del id del popup, se acepta cualquier
+                    # popup cuyo id contenga "georef".
+                    if href == popup_href or "georef" in href.lower():
+                        match, popup_href, popup_id = col, href, href[1:]
+                        break
+                if match is not None:
+                    break
             if match is None:
                 continue
             col_georef = match
@@ -1021,7 +1037,7 @@ class PjudSessionAsync(_PjudModalScraper):
             await page.select_option("#conTipoCausa", self._valor_tipo_publico(tipo))
             await page.fill("#conRolCausa", str(rol))
             await page.fill("#conEraCausa", str(anio))
-            await page.click('#busRit button[type="submit"]')
+            await page.click(self.BTN_BUSCAR_PUBLICO)
 
             # La tabla de resultados se llena por AJAX; una espera fija puede ganarle a una
             # respuesta lenta de PJUD (mas probable desde la IP del VPS que desde una red
@@ -1055,8 +1071,15 @@ class PjudSessionAsync(_PjudModalScraper):
                 )
                 return {"encontrada": False}
 
+            # El detalle carga por AJAX; en Penal tarda varios segundos (con 700 fijos no
+            # alcanzaba), asi que se sondea hasta ~12 s.
+            modal_id = None
+            for _ in range(24):
+                await page.wait_for_timeout(500)
+                modal_id = await page.evaluate(JS_MODAL_VISIBLE)
+                if modal_id:
+                    break
             await page.wait_for_timeout(700)
-            modal_id = await page.evaluate(JS_MODAL_VISIBLE)
             if not modal_id:
                 return {"encontrada": True, "error": "No se pudo abrir el detalle de la causa"}
 
@@ -1556,10 +1579,18 @@ class PjudSessionCobranzaPrivada(PjudSessionPrivada):
 class PjudSessionPenalAsync(PjudSessionAsync):
     """Igual que `PjudSessionAsync` (Consulta Unificada publica) para la competencia Penal.
 
-    CONFIRMADO en vivo (2026-09-24): competencia Penal = value "5" del select
-    `#competencia`; `#conTipoCausa` trae 1:Ordinaria 2:Exhorto 3:Administrativa
-    4:Extradicion 5:Militar; el formulario tiene los radios `#radioRitPenal` /
-    `#radioRucPenal`.
+    CONFIRMADO en vivo (2026-09-24, causa Ordinaria-3-2024 del 12o Juzgado de Garantia de
+    Santiago): competencia Penal = value "5" del select `#competencia`; `#conTipoCausa`
+    trae 1:Ordinaria 2:Exhorto 3:Administrativa 4:Extradicion 5:Militar; radios
+    `#radioRitPenal` / `#radioRucPenal`; boton Buscar `#btnConConsulta`; tabla de
+    resultados `#dtaTableDetalle` (Rit "Ordinaria-3-2024" / Tribunal / Ruc / Caratulado /
+    Fecha Ingreso / Estado Causa); modal de detalle `modalDetallePenalUnificado` con
+    pestanas Historia / Litigantes / Notificaciones / Relaciones y select `#selCuaderno`.
+    Historia: Folio/Doc./Anexo/Tramite/Desc. Tramite/Fec. Tramite/Fec. Firma/Estado, con
+    "Doc." como form POST `unificado/documentos/docu.php` (campo `data`). Notificaciones:
+    Tipo Notificacion/Estado Notificacion/Fecha Notificacion/Nombre/Estampado (form POST
+    al mismo docu.php, o icono fa-ban si no hay)/Geo. Cabecera: la 1a celda trae
+    "ROL: O-3-2024 / RUC: ..." junta.
 
     NO CONFIRMADO (no hay ejemplos HTML de una causa Penal en este repo): la fila de
     resultados se identifica por "-rol-anio" al final del texto de la celda (no se sabe
@@ -1570,9 +1601,12 @@ class PjudSessionPenalAsync(PjudSessionAsync):
     """
 
     RADIO_RIT = "radioRitPenal"
+    BTN_BUSCAR_PUBLICO = "#btnConConsulta"
     MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoPenal", "modalAnexoSolicitudPenal")
     PREFIJOS_HISTORIA = ("historia",)
-    MODAL_GEOREFERENCIA = "modalGeoReferenciaPenal"
+    # Historia de Penal no tiene columna de georreferencia (confirmado en vivo); si
+    # alguna fila la trae, se detecta por popup "georef" en las Notificaciones.
+    MODAL_GEOREFERENCIA = None
     MODAL_GEOREFERENCIA_NOTIF = "modalGeoReferenciaPenal"
     PREFIJOS_ANEXO_POPUP_EXTRA = ()
 
@@ -1581,8 +1615,8 @@ class PjudSessionPenalAsync(PjudSessionAsync):
 
         return valor_select_tipo_penal(tipo) or tipo
 
-    def _criterio_fila_publica(self, tipo: str, rol, anio) -> tuple[str, str | None]:
-        return f"-{rol}-{anio}", f"-{rol}-{anio}"
+    # La tabla de resultados muestra el RIT como "Ordinaria-3-2024" (tipo por nombre,
+    # confirmado en vivo) -- el criterio por defecto (`{tipo}-{rol}-{anio}`) ya calza.
 
 
 class PjudSessionPenalPrivada(PjudSessionPrivada):
@@ -1608,7 +1642,7 @@ class PjudSessionPenalPrivada(PjudSessionPrivada):
 
     MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoPenal", "modalAnexoSolicitudPenal")
     PREFIJOS_HISTORIA = ("historia",)
-    MODAL_GEOREFERENCIA = "modalGeoReferenciaPenal"
+    MODAL_GEOREFERENCIA = None
     MODAL_GEOREFERENCIA_NOTIF = "modalGeoReferenciaPenal"
     PREFIJOS_ANEXO_POPUP_EXTRA = ()
 

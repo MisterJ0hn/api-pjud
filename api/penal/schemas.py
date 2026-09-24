@@ -49,6 +49,7 @@ class CausaPenalDetalle(BaseModel):
     ruc: str | None = None
     estado_adm: str | None = None
     procedimiento: str | None = None
+    ubicacion: str | None = None
     proceso: str | None = None
     forma_inicio: str | None = None
     estado_proceso: str | None = None
@@ -98,18 +99,16 @@ class HistoriaPenalItem(BaseModel):
     folio_texto: str | None = None
     doc: list[HistoriaDocItem] = Field(default_factory=list)
     anexo: list[HistoriaAnexoItem] = Field(default_factory=list)
-    etapa: str | None = None
     tramite: str | None = None
     # Normalmente string; con documento adjunto es {descripcion, doc:{nombre, ruta}}.
     descripcion_tramite: str | DescripcionTramiteDetalle | None = None
     fecha_tramite: str | None = None
-    estado_firma: str | None = None
+    fecha_firma: str | None = None
     estado: str | None = None
 
 
 class LitiganteItem(BaseModel):
     participantes: str | None = None
-    rut: str | None = None
     persona: str | None = None
     razon_social: str | None = None
 

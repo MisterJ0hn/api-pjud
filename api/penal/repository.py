@@ -174,6 +174,7 @@ async def construir_causa_detalle(session: AsyncSession, causa: CausaPenal) -> C
         ruc=causa.ruc,
         estado_adm=causa.estado_adm,
         procedimiento=causa.procedimiento,
+        ubicacion=causa.ubicacion,
         proceso=causa.proceso,
         forma_inicio=causa.forma_inicio,
         estado_proceso=causa.estado_proceso,
@@ -257,11 +258,10 @@ async def construir_movimientos(session: AsyncSession, causa: CausaPenal) -> Mov
                     HistoriaAnexoItem(doc=doc_url(a.documento_id), color=a.color, fecha=a.fecha, referencia=a.referencia)
                     for a in anexo_rows
                 ],
-                etapa=h.etapa,
                 tramite=h.tramite,
                 descripcion_tramite=descripcion_tramite,
                 fecha_tramite=h.fecha_tramite,
-                estado_firma=h.estado_firma,
+                fecha_firma=h.fecha_firma,
                 estado=h.estado,
             )
         )
@@ -272,7 +272,7 @@ async def construir_movimientos(session: AsyncSession, causa: CausaPenal) -> Mov
         )
     ).scalars().all()
     litigantes = [
-        LitiganteItem(participantes=l.participantes, rut=l.rut, persona=l.persona, razon_social=l.razon_social)
+        LitiganteItem(participantes=l.participantes, persona=l.persona, razon_social=l.razon_social)
         for l in litigante_rows
     ]
 
@@ -296,7 +296,7 @@ async def construir_movimientos(session: AsyncSession, causa: CausaPenal) -> Mov
                 estado_notificacion=n.estado_notificacion,
                 fecha_notificacion=n.fecha_notificacion,
                 nombre=n.nombre,
-                estampado=n.estampado,
+                estampado=doc_url(n.estampado_doc_id) if n.estampado_doc_id else None,
                 geo=_geo_item(n.geo_latitud, n.geo_longitud, n.geo_corrector, list(imagenes_ids), imagen_url),
             )
         )

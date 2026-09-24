@@ -98,6 +98,7 @@ Response 200:
         "proceso": "Ejecutivo Obligación de Dar", #Proc.
         "forma_inicio":"Demanda", #Forma Inicio
         "estado_proceso": "Tramitación", #Estado Procesal
+        "ubicacion":"En tribunal", #Ubicacion
         "etapa":"1 Notificación demanda y su proveído", #Etapa
         "tribunal":"Juzgado de Letras y Garantía de Chile Chico", #Tribunal
         "acumulada":"https://",
@@ -180,32 +181,39 @@ Response 200:
             "tramite":"Actuación Receptor",
             "descripcion_tramite": "NOTIFICACIÓN DE DEMANDA (Exitosa) Diligencia:07/04/2026 17:10",
             "fecha_tramite": "10/04/2026 (07/04/2026)",
-            "estado_firma":"Firmado",
+            "fecha_firma":"Firmado",
             "estado":"Cerrado"
         },
         {
-            "folio": 21,
+            "folio": 2,
             // "folio" = parte numerica. "folio_texto" = folio tal cual lo muestra PJUD:
             // "1" normalmente, o "[6E]" para los movimientos de un exhorto (numerados
             // aparte, intercalados por fecha; un mismo "[NE]" puede repetirse si la causa
             // tiene mas de un exhorto).
-            "folio_texto": "1",
+            "folio_texto": "2",
             // "doc" es un array: 0, 1 o varios documentos por folio (columna "Doc.").
-            "doc": [],
-            "anexo": [],
-            "etapa":"Mandamiento",
-            "tramite":"Actuación Receptor",
-            "descripcion_tramite": {
-                "descripcion":"Despachese",
-                "doc":{
-                    "nombre":"xxx",
-                    "ruta":"https://api-pjud.temposoft.cl/public/historia_folio1_tramite_1.pdf"
+            "doc": [
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf", "color":"#ffddee"},
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_doc2_.pdf", "color":"#ffdd44"}
+            ],
+            "anexo": [
+                {
+                    "doc":"https://api-pjud.temposoft.cl/public/historia_anexo1_folio2_.pdf",
+                    "color":"#ffddee",
+                    "fecha": "24/02/2025",
+                    "referencia": "Mandato"
+                },
+                {
+                    "doc":"https://api-pjud.temposoft.cl/public/historia_anexo2_folio2_.pdf",
+                    "color":"#ffddee",
+                    "fecha": "24/02/2025",
+                    "referencia": "Mandato"
                 }
-            },            
-             "tramite":"Actuación Receptor",
+            ],
+            "tramite":"Actuación Receptor",
             "descripcion_tramite": "NOTIFICACIÓN DE DEMANDA (Exitosa) Diligencia:07/04/2026 17:10",
             "fecha_tramite": "10/04/2026 (07/04/2026)",
-            "estado_firma":"Firmado",
+            "fecha_firma":"Firmado",
             "estado":"Cerrado"
         }
     ],
