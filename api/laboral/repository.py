@@ -301,11 +301,12 @@ async def construir_movimientos(session: AsyncSession, causa: CausaLaboral) -> M
             MovimientoLaboralItem(
                 folio=m.folio,
                 folio_texto=None if m.folio_texto == "[SF]" else m.folio_texto,
-                doc=[MovimientoDocItem(doc=doc_url(d.documento_id)) for d in doc_rows],
+                doc=[MovimientoDocItem(doc=doc_url(d.documento_id), color=d.color) for d in doc_rows],
                 anexo=[
                     MovimientoAnexoItem(
                         folio=a.folio,
                         doc=doc_url(a.documento_id),
+                        color=a.color,
                         fecha=a.fecha,
                         referencia=a.referencia,
                     )

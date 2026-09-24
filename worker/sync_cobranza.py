@@ -45,7 +45,16 @@ from api.db.models.cobranza import (
 )
 from api.db.models.tribunales import TribunalCatalogo
 from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionCobranzaAsync, PjudSessionCobranzaPrivada
-from worker.idempotencia import extension_por_content_type, hash_fila, ruta_documento, slug
+from worker.idempotencia import (
+    color_en,
+    colores_anexos_fila,
+    colores_columna,
+    extension_por_content_type,
+    hash_fila,
+    refrescar_colores_docs_anexos,
+    ruta_documento,
+    slug,
+)
 from worker.sync_civil import _archivo_en_disco, _normalizar, _parsear_folio, _parsear_target
 
 logger = logging.getLogger("pjud.worker.sync_cobranza")
@@ -213,6 +222,9 @@ async def _persistir_docs_anexos_historia(
             descripcion_tramite_url, hash_padre=h,
         )
         mov.descripcion_tramite_doc_id = doc.id if doc else None
+        mov.descripcion_tramite_doc_color = color_en(
+            colores_columna(fila, "Desc. Trámite", "Desc. Tramite"), 0
+        )
 
     doc_urls = enlaces.get("Doc.") or []
     if doc_urls:
@@ -220,7 +232,12 @@ async def _persistir_docs_anexos_historia(
         for i, url in enumerate(doc_urls, start=1):
             clave = clave_base if i == 1 else f"{clave_base}_doc{i}"
             doc = await _obtener_o_descargar_doc(session, sesion_pjud, causa.id, "historia", clave, url, hash_padre=h)
-            session.add(HistoriaCobranzaDoc(movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i))
+            session.add(
+                HistoriaCobranzaDoc(
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
+                    color=color_en(colores_columna(fila, "Doc."), i - 1),
+                )
+            )
 
     # Columna "Anexo": carpeta-popup (`modalAnexoEscritoCobranza`, ya volcada por el
     # scraper en `fila["anexos_popup"]`) o enlaces directos.
@@ -241,7 +258,7 @@ async def _persistir_docs_anexos_historia(
             session.add(
                 HistoriaCobranzaAnexo(
                     movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
-                    fecha=fecha_anexo, referencia=referencia_anexo,
+                    fecha=fecha_anexo, referencia=referencia_anexo, color=a.get("color"),
                 )
             )
     elif anexo_urls:
@@ -250,7 +267,12 @@ async def _persistir_docs_anexos_historia(
             doc = await _obtener_o_descargar_doc(
                 session, sesion_pjud, causa.id, "historia_anexo", f"{clave_base}_anexo{i}", url, hash_padre=h
             )
-            session.add(HistoriaCobranzaAnexo(movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i))
+            session.add(
+                HistoriaCobranzaAnexo(
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
+                    color=color_en(colores_anexos_fila(fila), i - 1),
+                )
+            )
 
 
 async def _persistir_georeferencia_historia(
@@ -375,7 +397,13 @@ async def _sincronizar_historia(
             if existente is not None and existente.hash_contenido == h:
                 if existente.orden != idx:
                     existente.orden = idx
-                    await session.commit()
+                await refrescar_colores_docs_anexos(
+                    session, existente.id, fila, HistoriaCobranzaDoc, HistoriaCobranzaAnexo
+                )
+                mov_color = colores_columna(fila, "Desc. Trámite", "Desc. Tramite")
+                if mov_color and existente.descripcion_tramite_doc_id:
+                    existente.descripcion_tramite_doc_color = color_en(mov_color, 0)
+                await session.commit()
                 continue
 
             hubo_cambios = True

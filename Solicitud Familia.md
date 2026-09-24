@@ -174,13 +174,14 @@ Response 200:
         {
             "folio": 2,
             "doc":[
-                {"doc":"https://api-pjud.temposoft.cl/public/movimientos_folio2_.pdf"},
-                {"doc":"https://api-pjud.temposoft.cl/public/movimientos_folio2_doc2_.pdf"}
+                {"doc":"https://api-pjud.temposoft.cl/public/movimientos_folio2_.pdf", "color":"#ffddee"},
+                {"doc":"https://api-pjud.temposoft.cl/public/movimientos_folio2_doc2_.pdf", "color":"#ffdd44"}
             ],
             "anexo": [
                 {
                     "folio":14,
                     "doc":"https://api-pjud.temposoft.cl/public/movimientos_anexo1_folio14_.pdf",
+                    "color":"#ffddee",
                     "fecha": "24/02/2025",
                     "nombre_documento": "Mandato",
                     "observacion":"certifiado"
@@ -188,6 +189,7 @@ Response 200:
                 {
                     "folio":15,
                     "doc":"https://api-pjud.temposoft.cl/public/movimientos_anexo1_folio15_.pdf",
+                    "color":"#ffddee",
                     "fecha": "24/02/2025",
                     "nombre_documento": "Mandato",
                     "observacion":"certifiado"

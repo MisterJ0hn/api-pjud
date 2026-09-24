@@ -97,10 +97,12 @@ class MovimientosRequest(BaseModel):
 
 class HistoriaDocItem(BaseModel):
     doc: str | None = None
+    color: str | None = None
 
 
 class HistoriaAnexoItem(BaseModel):
     doc: str | None = None
+    color: str | None = None
     fecha: str | None = None
     referencia: str | None = None
 
@@ -110,6 +112,7 @@ class DescripcionTramiteDocItem(BaseModel):
     # a diferencia de DocumentoRef que usa "nombre_archivo"/"url").
     nombre: str | None = None
     ruta: str | None = None
+    color: str | None = None
 
 
 class DescripcionTramiteDetalle(BaseModel):

@@ -191,18 +191,21 @@ Response 200:
             // tiene mas de un exhorto).
             "folio_texto": "1",
             // "doc" es un array: 0, 1 o varios documentos por folio (columna "Doc.").
+            // "doc" debe tener el color del documento. este se obtiene de despues del href en el <i title="Descargar Documento">, tiene un style="color:#ffddee", ese es el color que necesito. 
             "doc": [
-                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf"},
-                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_doc2_.pdf"}
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf", "color":"#ffddee"},
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_doc2_.pdf", "color":"#ffdd44"}
             ],
             "anexo": [
                 {
                     "doc":"https://api-pjud.temposoft.cl/public/historia_anexo1_folio2_.pdf",
+                    "color":"#ffddee",
                     "fecha": "24/02/2025",
                     "referencia": "Mandato"
                 },
                 {
                     "doc":"https://api-pjud.temposoft.cl/public/historia_anexo2_folio2_.pdf",
+                    "color":"#ffddee",
                     "fecha": "24/02/2025",
                     "referencia": "Mandato"
                 }
@@ -230,7 +233,8 @@ Response 200:
                 "descripcion":"Despachese",
                 "doc":{
                     "nombre":"xxx",
-                    "ruta":"https://api-pjud.temposoft.cl/public/historia_folio1_tramite_1.pdf"
+                    "ruta":"https://api-pjud.temposoft.cl/public/historia_folio1_tramite_1.pdf",
+                    "color":"#ffddee"
                 }
             },            
             "estado_firma":"Firmado",

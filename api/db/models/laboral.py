@@ -215,6 +215,7 @@ class MovimientoLaboralDoc(Base):
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_laboral.id"), nullable=True)
     orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     movimiento: Mapped["MovimientoLaboral"] = relationship(back_populates="docs")
 
@@ -238,6 +239,7 @@ class MovimientoLaboralAnexo(Base):
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_laboral.id"), nullable=True)
     orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
     folio: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
     referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)

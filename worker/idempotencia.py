@@ -52,3 +52,52 @@ def extension_por_content_type(content_type: str) -> str:
     if "gif" in content_type:
         return ".gif"
     return ".bin"
+
+
+# --- Color del icono "Descargar Documento" ------------------------------------
+# El scraper deja el color de cada link en `fila["colores"][columna]` (paralelo a
+# `fila["enlaces"][columna]`) y el de cada anexo de popup en `anexos_popup[i]["color"]`.
+# El color NO entra al hash de la fila (`hash_fila(valores)`), asi que una fila sin
+# cambios de texto no se reprocesa: los workers lo refrescan aparte con estos helpers.
+
+
+def color_en(lista, i: int) -> str | None:
+    """Color del i-esimo link (0-based); None si no hay o viene vacio."""
+    return (lista[i] or None) if lista and i < len(lista) else None
+
+
+def colores_columna(fila: dict, *columnas: str) -> list[str | None]:
+    c = fila.get("colores") or {}
+    for col in columnas:
+        if c.get(col):
+            return c[col]
+    return []
+
+
+def colores_anexos_fila(fila: dict) -> list[str | None]:
+    """Colores de los anexos en el mismo orden con que se persisten: los del popup si la
+    fila los trae, si no los de la columna "Anexo(s)" con enlaces directos."""
+    popup = fila.get("anexos_popup") or []
+    if popup:
+        return [a.get("color") for a in popup]
+    return colores_columna(fila, "Anexo", "Anexos")
+
+
+async def refrescar_colores_docs_anexos(session, movimiento_id, fila: dict, doc_model, anexo_model) -> None:
+    """Actualiza `color` en las filas ya guardadas de docs/anexos de un movimiento sin
+    tocar nada mas (ni re-descargar). Cubre (a) el backfill de filas creadas antes de que
+    existiera la columna y (b) cambios de color en PJUD con el texto de la fila igual.
+    Si el scraper no trajo links de un tipo (lista vacia) no se toca ese tipo."""
+    from sqlalchemy import select
+
+    for modelo, colores in (
+        (doc_model, colores_columna(fila, "Doc.")),
+        (anexo_model, colores_anexos_fila(fila)),
+    ):
+        if not colores:
+            continue
+        rows = (await session.execute(select(modelo).where(modelo.movimiento_id == movimiento_id))).scalars().all()
+        for r in rows:
+            nuevo = color_en(colores, r.orden - 1)
+            if r.color != nuevo:
+                r.color = nuevo

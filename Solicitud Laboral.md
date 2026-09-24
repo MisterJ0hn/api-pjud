@@ -168,8 +168,8 @@ Response 200:
             // "doc" es un array: 0, 1 o varios documentos por folio (columna "Doc.").
             "doc":  #verifica si en vez de documento viene un modal, si es modal. analiza y dame una opcion para desolver este dilema
             [
-                {"doc":"https://api-pjud.temposoft.cl/public/movimiento_folio1_.pdf"},
-                {"doc":"https://api-pjud.temposoft.cl/public/movimiento_folio1_doc2_.pdf"}
+                {"doc":"https://api-pjud.temposoft.cl/public/movimiento_folio1_.pdf", "color":"#ffddee"},
+                {"doc":"https://api-pjud.temposoft.cl/public/movimiento_folio1_doc2_.pdf", "color":"#ffdd44"}
             ],
             "anexo": [],
             "etapa":"Mandamiento",
@@ -207,17 +207,19 @@ Response 200:
         {
             "folio": 2,
             "doc":[
-                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf"},
-                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_doc2_.pdf"}
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf", "color":"#ffddee"},
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_doc2_.pdf", "color":"#ffdd44"}
             ],
             "anexo": [
                 {
                     "doc":"https://api-pjud.temposoft.cl/public/historia_anexo1_folio2_.pdf",
+                    "color":"#ffddee",
                     "fecha": "24/02/2025",
                     "referencia": "Mandato"
                 },
                 {
                     "doc":"https://api-pjud.temposoft.cl/public/historia_anexo2_folio2_.pdf",
+                    "color":"#ffddee",
                     "fecha": "24/02/2025",
                     "referencia": "Mandato"
                 }

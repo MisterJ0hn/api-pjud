@@ -85,6 +85,7 @@ class MovimientoHistoriaDoc(Base):
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos.id"), nullable=True)
     orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     movimiento: Mapped["MovimientoHistoria"] = relationship(back_populates="docs")
 
@@ -100,6 +101,7 @@ class MovimientoHistoriaAnexo(Base):
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos.id"), nullable=True)
     orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
     fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
     referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
 

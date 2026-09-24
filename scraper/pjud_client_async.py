@@ -116,6 +116,20 @@ JS_SELECCIONAR_FILA_RIT = """(args) => {
 # indicador de orden real de PJUD para esa lista, mas confiable que el orden del DOM o
 # la clave natural referencia+fecha (que se puede repetir).
 JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
+    // Color del icono <i title="Descargar Documento" style="color:#xxxxxx"> que va dentro
+    // del <a>/<form> de cada documento. Se lee del atributo `style` crudo (no de
+    // `el.style.color`, que el navegador normaliza a rgb()); si igual viniera como rgb()
+    // se convierte a #rrggbb. Sin icono o sin color -> null.
+    const colorDoc = el => {
+        const i = el.querySelector('i[title*="Descargar"]');
+        if (!i) return null;
+        const m = /(?:^|;)\\s*color\\s*:\\s*([^;]+)/i.exec(i.getAttribute('style') || '');
+        if (!m) return null;
+        let c = m[1].trim().toLowerCase();
+        const rgb = /^rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/.exec(c);
+        if (rgb) c = '#' + [rgb[1], rgb[2], rgb[3]].map(n => (+n).toString(16).padStart(2, '0')).join('');
+        return c || null;
+    };
     const headerRow = t.querySelector('thead tr') || t.querySelector('tr:first-child');
     const headerCells = t.querySelectorAll('thead th');
     const headers = (headerCells.length ? Array.from(headerCells) : Array.from(t.querySelectorAll('tr:first-child th')))
@@ -135,7 +149,9 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
         if (celdas.length === 0) return null;
         const valores = {};
         const enlaces = {};
+        const colores = {};
         const posts = {};
+        const colores_posts = {};
         const popups = {};
         const targets = {};
         const iconos = {};
@@ -154,6 +170,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
                 else if (/fa-minus|fa-ban/.test(cls)) iconos[header] = false;
             }
             const urls = [];
+            const cols = [];
             Array.from(td.querySelectorAll('form')).forEach(form => {
                 const input = form.querySelector('input[type="hidden"], input:not([type])') || form.querySelector('input');
                 const action = form.getAttribute('action');
@@ -163,6 +180,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
                     const url = new URL(action, location.href);
                     url.searchParams.set(input.name, input.value);
                     urls.push(url.toString());
+                    cols.push(colorDoc(form));
                     const target = form.getAttribute('target');
                     if (target) (targets[header] = targets[header] || []).push(target);
                 } else {
@@ -172,6 +190,7 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
                         url: new URL(action, location.href).toString(),
                         field: input.name, value: input.value,
                     });
+                    (colores_posts[header] = colores_posts[header] || []).push(colorDoc(form));
                 }
             });
             // El trigger de un popup no siempre es un <a> -- "Rol Destino" de Exhortos
@@ -187,11 +206,14 @@ JS_EXTRAER_FILAS_CON_ENLACES = """tables => tables.map(t => {
                     }
                     return;
                 }
-                if (a.tagName === 'A') urls.push(new URL(href, location.href).toString());
+                if (a.tagName === 'A') {
+                    urls.push(new URL(href, location.href).toString());
+                    cols.push(colorDoc(a));
+                }
             });
-            if (urls.length) enlaces[header] = urls;
+            if (urls.length) { enlaces[header] = urls; colores[header] = cols; }
         });
-        return {valores, enlaces, posts, popups, targets, iconos};
+        return {valores, enlaces, colores, posts, colores_posts, popups, targets, iconos};
     }).filter(f => f !== null);
     return {headers, filas};
 })"""
@@ -659,10 +681,14 @@ class _PjudModalScraper:
                 v = pf.get("valores", {})
                 docs = (pf.get("enlaces") or {}).get("Doc.") or []
                 posts = (pf.get("posts") or {}).get("Doc.") or []
+                cols = (pf.get("colores") or {}).get("Doc.") or []
+                cols_post = (pf.get("colores_posts") or {}).get("Doc.") or []
                 anexos.append(
                     {
                         "doc": docs[0] if docs else None,
                         "doc_post": posts[0] if posts else None,
+                        # Color del icono "Descargar Documento" (None si no lo trae).
+                        "color": (cols[0] if docs else (cols_post[0] if posts and cols_post else None)),
                         # Columnas crudas del popup: el worker las mapea segun `popup`.
                         "valores": v,
                         "popup": popup_id,

@@ -323,7 +323,11 @@ async def construir_movimientos(session: AsyncSession, causa: CausaCobranza) -> 
             doc_desc = docs_por_id.get(h.descripcion_tramite_doc_id)
             descripcion_tramite = DescripcionTramiteDetalle(
                 descripcion=h.descripcion_tramite,
-                doc=DescripcionTramiteDocItem(nombre=doc_desc.nombre_archivo, ruta=doc_url(h.descripcion_tramite_doc_id))
+                doc=DescripcionTramiteDocItem(
+                    nombre=doc_desc.nombre_archivo,
+                    ruta=doc_url(h.descripcion_tramite_doc_id),
+                    color=h.descripcion_tramite_doc_color,
+                )
                 if doc_desc is not None
                 else None,
             )
@@ -334,9 +338,11 @@ async def construir_movimientos(session: AsyncSession, causa: CausaCobranza) -> 
             HistoriaCobranzaItem(
                 folio=h.folio,
                 folio_texto=None if h.folio_texto == "[SF]" else h.folio_texto,
-                doc=[HistoriaDocItem(doc=doc_url(d.documento_id)) for d in doc_rows],
+                doc=[HistoriaDocItem(doc=doc_url(d.documento_id), color=d.color) for d in doc_rows],
                 anexo=[
-                    HistoriaAnexoItem(doc=doc_url(a.documento_id), fecha=a.fecha, referencia=a.referencia)
+                    HistoriaAnexoItem(
+                        doc=doc_url(a.documento_id), color=a.color, fecha=a.fecha, referencia=a.referencia
+                    )
                     for a in anexo_rows
                 ],
                 etapa=h.etapa,

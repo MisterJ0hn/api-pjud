@@ -46,7 +46,16 @@ from api.db.models.laboral import (
 )
 from api.db.models.tribunales import TribunalCatalogo
 from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionLaboralAsync, PjudSessionLaboralPrivada
-from worker.idempotencia import extension_por_content_type, hash_fila, ruta_documento, slug
+from worker.idempotencia import (
+    color_en,
+    colores_anexos_fila,
+    colores_columna,
+    extension_por_content_type,
+    hash_fila,
+    refrescar_colores_docs_anexos,
+    ruta_documento,
+    slug,
+)
 from worker.sync_civil import _archivo_en_disco, _normalizar, _parsear_folio, _parsear_target
 
 logger = logging.getLogger("pjud.worker.sync_laboral")
@@ -300,7 +309,12 @@ async def _persistir_docs_anexos_movimiento(
             doc = await _obtener_o_descargar_doc(
                 session, sesion_pjud, causa.id, "movimiento", clave, url, hash_padre=h
             )
-            session.add(MovimientoLaboralDoc(movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i))
+            session.add(
+                MovimientoLaboralDoc(
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
+                    color=color_en(colores_columna(fila, "Doc."), i - 1),
+                )
+            )
 
     # Columna "Anexos": carpeta-popup (`modalAnexoEscritoLaboral`, ya volcada por el
     # scraper en `fila["anexos_popup"]`) o enlaces directos.
@@ -321,7 +335,7 @@ async def _persistir_docs_anexos_movimiento(
             session.add(
                 MovimientoLaboralAnexo(
                     movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
-                    folio=folio_a, fecha=fecha_a, referencia=referencia_a,
+                    folio=folio_a, fecha=fecha_a, referencia=referencia_a, color=a.get("color"),
                 )
             )
     elif anexo_urls:
@@ -332,7 +346,12 @@ async def _persistir_docs_anexos_movimiento(
             doc = await _obtener_o_descargar_doc(
                 session, sesion_pjud, causa.id, "movimiento_anexo", f"{clave_base}_anexo{i}", url, hash_padre=h
             )
-            session.add(MovimientoLaboralAnexo(movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i))
+            session.add(
+                MovimientoLaboralAnexo(
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
+                    color=color_en(colores_anexos_fila(fila), i - 1),
+                )
+            )
 
 
 async def _persistir_georeferencia_movimiento(
@@ -438,7 +457,10 @@ async def _sincronizar_movimientos(
         if existente is not None and existente.hash_contenido == h:
             if existente.orden != idx:
                 existente.orden = idx
-                await session.commit()
+            await refrescar_colores_docs_anexos(
+                session, existente.id, fila, MovimientoLaboralDoc, MovimientoLaboralAnexo
+            )
+            await session.commit()
             continue
 
         hubo_cambios = True

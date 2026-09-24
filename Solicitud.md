@@ -205,17 +205,19 @@ Response 200:
         {
             "folio": 2,
             "doc":[
-                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf"},
-                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_doc2_.pdf"}
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_.pdf", "color":"#ffddee"},
+                {"doc":"https://api-pjud.temposoft.cl/public/historia_folio2_doc2_.pdf", "color":"#ffdd44"}
             ],
             "anexo": [
                 {
                     "doc":"https://api-pjud.temposoft.cl/public/historia_anexo1_folio2_.pdf",
+                    "color":"#ffddee",
                     "fecha": "24/02/2025",
                     "referencia": "Mandato"
                 },
                 {
                     "doc":"https://api-pjud.temposoft.cl/public/historia_anexo2_folio2_.pdf",
+                    "color":"#ffddee",
                     "fecha": "24/02/2025",
                     "referencia": "Mandato"
                 }

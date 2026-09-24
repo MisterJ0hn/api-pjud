@@ -82,11 +82,13 @@ class MovimientosRequest(BaseModel):
 
 class MovimientoDocItem(BaseModel):
     doc: str | None = None
+    color: str | None = None
 
 
 class MovimientoAnexoItem(BaseModel):
     folio: int | None = None
     doc: str | None = None
+    color: str | None = None
     fecha: str | None = None
     referencia: str | None = None
 

@@ -325,9 +325,11 @@ async def construir_movimientos(session: AsyncSession, causa: Causa, cuaderno: C
                 folio=h.folio,
                 # "[SF]" es el marcador interno de una fila sin folio; hacia afuera va vacio.
                 folio_texto=None if h.folio_texto == "[SF]" else h.folio_texto,
-                doc=[HistoriaDocItem(doc=doc_url(d.documento_id)) for d in doc_rows],
+                doc=[HistoriaDocItem(doc=doc_url(d.documento_id), color=d.color) for d in doc_rows],
                 anexo=[
-                    HistoriaAnexoItem(doc=doc_url(a.documento_id), fecha=a.fecha, referencia=a.referencia)
+                    HistoriaAnexoItem(
+                        doc=doc_url(a.documento_id), color=a.color, fecha=a.fecha, referencia=a.referencia
+                    )
                     for a in anexo_rows
                 ],
                 etapa=h.etapa,

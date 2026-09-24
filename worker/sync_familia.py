@@ -34,7 +34,16 @@ from api.db.models.familia import (
     PlazoFamilia,
 )
 from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionFamiliaPrivada
-from worker.idempotencia import extension_por_content_type, hash_fila, ruta_documento, slug
+from worker.idempotencia import (
+    color_en,
+    colores_anexos_fila,
+    colores_columna,
+    extension_por_content_type,
+    hash_fila,
+    refrescar_colores_docs_anexos,
+    ruta_documento,
+    slug,
+)
 from worker.sync_civil import _archivo_en_disco, _normalizar, _parsear_folio, _parsear_target
 
 logger = logging.getLogger("pjud.worker.sync_familia")
@@ -209,7 +218,8 @@ async def _persistir_docs_anexos_historia(
             )
             session.add(
                 MovimientoHistoriaFamiliaDoc(
-                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
+                    color=color_en(colores_columna(fila, "Doc."), i - 1),
                 )
             )
 
@@ -239,6 +249,7 @@ async def _persistir_docs_anexos_historia(
                     fecha=fecha_a,
                     nombre_documento=nombre_a,
                     observacion=obs_a,
+                    color=a.get("color"),
                 )
             )
     elif anexo_urls:
@@ -251,7 +262,8 @@ async def _persistir_docs_anexos_historia(
             )
             session.add(
                 MovimientoHistoriaFamiliaAnexo(
-                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
+                    color=color_en(colores_anexos_fila(fila), i - 1),
                 )
             )
 
@@ -382,7 +394,10 @@ async def _sincronizar_historia(
             # arriba. Los documentos ya descargados no se re-piden.
             if existente.orden != idx:
                 existente.orden = idx
-                await session.commit()
+            await refrescar_colores_docs_anexos(
+                session, existente.id, fila, MovimientoHistoriaFamiliaDoc, MovimientoHistoriaFamiliaAnexo
+            )
+            await session.commit()
             continue
 
         hubo_cambios = True

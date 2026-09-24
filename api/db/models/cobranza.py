@@ -193,6 +193,7 @@ class HistoriaCobranza(Base):
     tramite: Mapped[str | None] = mapped_column(String(300), nullable=True)
     descripcion_tramite: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     descripcion_tramite_doc_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_cobranza.id"), nullable=True)
+    descripcion_tramite_doc_color: Mapped[str | None] = mapped_column(String(32), nullable=True)
     estado_firma: Mapped[str | None] = mapped_column(String(60), nullable=True)
     fecha_tramite: Mapped[str | None] = mapped_column(String(60), nullable=True)
     hash_contenido: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -233,6 +234,7 @@ class HistoriaCobranzaDoc(Base):
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_cobranza.id"), nullable=True)
     orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     movimiento: Mapped["HistoriaCobranza"] = relationship(back_populates="docs")
 
@@ -248,6 +250,7 @@ class HistoriaCobranzaAnexo(Base):
     )
     documento_id = mapped_column(UUID(as_uuid=True), ForeignKey("documentos_cobranza.id"), nullable=True)
     orden: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
     fecha: Mapped[str | None] = mapped_column(String(60), nullable=True)
     referencia: Mapped[str | None] = mapped_column(String(300), nullable=True)
 

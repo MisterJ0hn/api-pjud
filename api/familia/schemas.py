@@ -74,11 +74,13 @@ class MovimientosRequest(BaseModel):
 
 class HistoriaDocItem(BaseModel):
     doc: str | None = None
+    color: str | None = None
 
 
 class HistoriaAnexoItem(BaseModel):
     folio: int | None = None
     doc: str | None = None
+    color: str | None = None
     fecha: str | None = None
     nombre_documento: str | None = None
     observacion: str | None = None

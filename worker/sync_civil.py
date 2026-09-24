@@ -45,7 +45,16 @@ from api.db.models.movimientos import (
 )
 from api.db.models.tribunales import TribunalCatalogo
 from scraper.pjud_client_async import CausaNoEncontrada, PjudSessionAsync, PjudSessionPrivada
-from worker.idempotencia import extension_por_content_type, hash_fila, ruta_documento, slug
+from worker.idempotencia import (
+    color_en,
+    colores_anexos_fila,
+    colores_columna,
+    extension_por_content_type,
+    hash_fila,
+    refrescar_colores_docs_anexos,
+    ruta_documento,
+    slug,
+)
 
 logger = logging.getLogger("pjud.worker.sync_civil")
 
@@ -245,7 +254,8 @@ async def _persistir_docs_anexos_historia(
             )
             session.add(
                 MovimientoHistoriaDoc(
-                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
+                    color=color_en(colores_columna(fila, "Doc."), i - 1),
                 )
             )
 
@@ -277,6 +287,7 @@ async def _persistir_docs_anexos_historia(
                     orden=i,
                     fecha=fecha_anexo,
                     referencia=referencia_anexo,
+                    color=a.get("color"),
                 )
             )
     elif anexo_urls:
@@ -289,7 +300,10 @@ async def _persistir_docs_anexos_historia(
                 cuaderno.numero, url,
             )
             session.add(
-                MovimientoHistoriaAnexo(movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i)
+                MovimientoHistoriaAnexo(
+                    movimiento_id=mov.id, documento_id=doc.id if doc else None, orden=i,
+                    color=color_en(colores_anexos_fila(fila), i - 1),
+                )
             )
 
 
@@ -494,7 +508,10 @@ async def _sincronizar_historia(
                 # posicion (PJUD agrego folios/exhortos arriba). No amerita descargar nada.
                 if existente.orden != idx:
                     existente.orden = idx
-                    await session.commit()
+                await refrescar_colores_docs_anexos(
+                    session, existente.id, fila, MovimientoHistoriaDoc, MovimientoHistoriaAnexo
+                )
+                await session.commit()
                 continue
             logger.info("Folio %s: documento faltante en BD o en disco, se recompleta", folio_texto)
 

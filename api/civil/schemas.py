@@ -105,12 +105,14 @@ class MovimientosRequest(BaseModel):
 
 class HistoriaAnexoItem(BaseModel):
     doc: str | None = None
+    color: str | None = None
     fecha: str | None = None
     referencia: str | None = None
 
 
 class HistoriaDocItem(BaseModel):
     doc: str | None = None
+    color: str | None = None
 
 
 class GeoReferenciaMapa(BaseModel):

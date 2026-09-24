@@ -265,11 +265,12 @@ async def construir_movimientos(session: AsyncSession, causa: CausaFamilia) -> M
             MovimientoFamiliaItem(
                 folio=h.folio,
                 folio_texto=None if h.folio_texto == "[SF]" else h.folio_texto,
-                doc=[HistoriaDocItem(doc=doc_url(d.documento_id)) for d in doc_rows],
+                doc=[HistoriaDocItem(doc=doc_url(d.documento_id), color=d.color) for d in doc_rows],
                 anexo=[
                     HistoriaAnexoItem(
                         folio=a.folio,
                         doc=doc_url(a.documento_id),
+                        color=a.color,
                         fecha=a.fecha,
                         nombre_documento=a.nombre_documento,
                         observacion=a.observacion,
