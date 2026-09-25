@@ -963,8 +963,30 @@ class PjudSessionAsync(_PjudModalScraper):
     async def _ensure_rit_tab(self) -> None:
         page = self._page
         if not await page.is_visible("#competencia"):
-            await page.click('a[href="#busRit"]')
+            # La sesion compartida es de larga duracion: si la pagina ya no es el
+            # formulario de la Consulta Unificada (sesion vencida, redireccion, pagina de
+            # error) la pestana `#busRit` ni siquiera existe y `click` esperaria 30 s
+            # para fallar. En ese caso se recarga el formulario antes de seguir.
+            if await page.query_selector('a[href="#busRit"]') is None:
+                logger.warning("Consulta Unificada no cargada (url=%s); se recarga", page.url)
+                await page.goto(BASE_URL, wait_until="networkidle")
+            if not await page.is_visible("#competencia"):
+                await page.click('a[href="#busRit"]', timeout=15000)
         await page.wait_for_selector("#competencia", state="visible")
+
+    async def _cerrar_modales_abiertos(self) -> None:
+        """Cierra cualquier modal que haya quedado abierto de una busqueda anterior
+        (p. ej. una que termino en error sin pasar por `JS_CERRAR_MODAL`)."""
+        try:
+            await self._page.evaluate(
+                """() => document.querySelectorAll('.modal.in').forEach(m => {
+                    const c = m.querySelector('.close, button.close, [data-dismiss="modal"]');
+                    if (c) c.click();
+                })"""
+            )
+            await self._page.wait_for_timeout(300)
+        except Exception:
+            pass
 
     async def _seleccionar_competencia_corte(self, competencia: str, corte: str) -> None:
         page = self._page
@@ -1027,6 +1049,7 @@ class PjudSessionAsync(_PjudModalScraper):
             tipo, rol, anio, competencia, corte, tribunal,
         )
         try:
+            await self._cerrar_modales_abiertos()
             await self._seleccionar_competencia_corte(competencia, corte)
             await page.select_option("#conTribunal", tribunal)
             await page.wait_for_timeout(300)
