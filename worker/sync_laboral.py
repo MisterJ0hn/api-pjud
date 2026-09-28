@@ -808,8 +808,14 @@ async def sincronizar_causa_laboral(
             logger.info("Seccion de Laboral no mapeada, se ignora: %r", nombre)
 
     # --- Cabecera: Texto Demanda (popup con tabla, a diferencia de civil) --------
+    # En causas tipo "I" (Reclamo, p. ej. reclamos de multa administrativa) PJUD
+    # etiqueta el mismo popup "Texto Reclamo" en vez de "Texto Demanda" -- mismo modal
+    # (`modalTextoDemandaLaboral`) y misma estructura de tabla (Doc. Demanda/Doc./Fecha/
+    # Referencia). CONFIRMADO en vivo (2026-09-28, I-740-2026).
     submodales = cabecera.get("submodales", {}) or {}
-    texto_demanda_sub = next((v for k, v in submodales.items() if _es_seccion(k, "texto demanda")), None)
+    texto_demanda_sub = next(
+        (v for k, v in submodales.items() if _es_seccion(k, "texto demanda", "texto reclamo")), None
+    )
     if texto_demanda_sub:
         await _rep("Guardando texto demanda")
         for sub in texto_demanda_sub.get("filas", []):
