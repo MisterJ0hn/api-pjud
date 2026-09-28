@@ -523,7 +523,12 @@ class _PjudModalScraper:
             return None
         sub_id = target[1:]
         try:
-            await page.click(f'#{modal_id} a[href="{target}"]')
+            # `.first`, no `page.click` a secas: en causas Laboral tipo "Reclamo" (p. ej.
+            # I-740-2026) PJUD duplica el <a href="#modalTextoDemandaLaboral"> en una
+            # segunda <td> vacia junto al icono real -- el selector calza con 2 elementos
+            # y `page.click` (modo strict de Playwright) tira excepcion, dejando el popup
+            # sin abrir. CONFIRMADO en vivo (2026-09-28).
+            await page.locator(f'#{modal_id} a[href="{target}"]').first.click()
         except Exception:
             logger.warning("No se pudo abrir el sub-modal %s", target)
             return None
@@ -566,7 +571,9 @@ class _PjudModalScraper:
             return None
         sub_id = target[1:]
         try:
-            await page.click(f'#{modal_id} a[href="{target}"]')
+            # Ver comentario equivalente en `_procesar_submodal`: usar `.first` por si el
+            # selector calza con mas de un elemento.
+            await page.locator(f'#{modal_id} a[href="{target}"]').first.click()
         except Exception:
             logger.warning("No se pudo abrir el sub-modal %s", target)
             return None

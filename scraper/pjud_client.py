@@ -337,7 +337,9 @@ class PjudSession:
             return [], []
         sub_id = target[1:]
         try:
-            page.click(f'#{modal_id} a[href="{target}"]')
+            # `.first`: el selector puede calzar con mas de un elemento (ver comentario
+            # equivalente en `pjud_client_async.py::_procesar_submodal`).
+            page.locator(f'#{modal_id} a[href="{target}"]').first.click()
         except Exception:
             logger.warning("No se pudo abrir el sub-modal %s", target)
             return [], []
