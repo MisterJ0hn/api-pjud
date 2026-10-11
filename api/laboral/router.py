@@ -6,8 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import Principal, obtener_principal
+from api.common.acceso import exigir_acceso
 from api.civil.cripto import cifrar
-from api.civil.schemas import CausaRequest
+from api.civil.schemas import CausaRequest, ConsultarCausaRequest
 from api.common.rut import normalizar_credenciales
 from api.config import settings
 from api.db.models.laboral import CausaLaboral
@@ -97,13 +98,12 @@ async def sincronizar_laboral(
 
 @router.post("/consultar_laboral", response_model=ConsultarLaboralResponse)
 async def consultar_laboral(
-    body: CausaRequest,
+    body: ConsultarCausaRequest,
     principal: Principal = Depends(obtener_principal),
     session: AsyncSession = Depends(get_session),
 ):
     causa = await buscar_causa(session, body.corte, body.tribunal, body.tipo, body.rol, body.anio)
-    if causa is None:
-        raise NoEncontradoError()
+    await exigir_acceso(session, "laboral", causa, body.rut, body.clave, body.metodo_login)
 
     detalle = await construir_causa_detalle(session, causa)
     return ConsultarLaboralResponse(causa=detalle)

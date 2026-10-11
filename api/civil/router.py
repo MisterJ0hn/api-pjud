@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import Principal, obtener_principal
+from api.common.acceso import exigir_acceso
 from api.civil.cripto import cifrar
 from api.common.rut import normalizar_credenciales
 from api.civil.repository import (
@@ -19,6 +20,7 @@ from api.civil.repository import (
 )
 from api.civil.schemas import (
     CausaRequest,
+    ConsultarCausaRequest,
     ConsultarCivilResponse,
     MovimientosRequest,
     MovimientosResponse,
@@ -106,13 +108,12 @@ async def sincronizar_civil(
 
 @router.post("/consultar_civil", response_model=ConsultarCivilResponse)
 async def consultar_civil(
-    body: CausaRequest,
+    body: ConsultarCausaRequest,
     principal: Principal = Depends(obtener_principal),
     session: AsyncSession = Depends(get_session),
 ):
     causa = await buscar_causa(session, COMPETENCIA, body.corte, body.tribunal, body.tipo, body.rol, body.anio)
-    if causa is None:
-        raise NoEncontradoError()
+    await exigir_acceso(session, "civil", causa, body.rut, body.clave, body.metodo_login)
 
     detalle = await construir_causa_detalle(session, causa)
     return ConsultarCivilResponse(causa=detalle)

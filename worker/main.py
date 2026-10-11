@@ -14,6 +14,12 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update
 
 from api.civil.cripto import descifrar
+from api.common.acceso import (
+    ERROR_CREDENCIALES,
+    VISIBILIDAD_PRIVADA,
+    VISIBILIDAD_PUBLICA,
+    registrar_acceso,
+)
 from api.config import settings
 from api.db.models.causas import Causa
 from api.db.models.cobranza import CausaCobranza
@@ -112,6 +118,8 @@ async def _barrer_jobs_huerfanos() -> None:
             job.error_mensaje = "Job huerfano: worker reiniciado a medio proceso"
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)
+            if job.tipo == "verificacion":
+                continue
             competencia = _competencia_job(job)
             causa = await session.get(COMPETENCIA_MODELO[competencia], _causa_id_job(job, competencia))
             if causa is not None and causa.estado_sync == "Sincronizando":
@@ -128,7 +136,9 @@ async def _tomar_siguiente_job() -> int | None:
             await session.execute(
                 select(SyncJob)
                 .where(SyncJob.estado == "pendiente")
-                .order_by(SyncJob.encolado_en)
+                # Las verificaciones de acceso (un usuario esperando la respuesta de
+                # consultar_*) pasan delante de las sincronizaciones.
+                .order_by((SyncJob.tipo == "verificacion").desc(), SyncJob.encolado_en)
                 .limit(1)
                 .with_for_update(skip_locked=True)
             )
@@ -162,6 +172,7 @@ SESIONES_PUBLICAS = {
 }
 SESIONES_PRIVADAS = {
     "civil": PjudSessionPrivada,
+    "familia": PjudSessionFamiliaPrivada,
     "laboral": PjudSessionLaboralPrivada,
     "cobranza": PjudSessionCobranzaPrivada,
     "penal": PjudSessionPenalPrivada,
@@ -176,7 +187,7 @@ SINCRONIZADORES = {
 
 async def _sincronizar_publica_luego_privada(
     session, sesion_pjud, job: SyncJob, causa, competencia: str, privada: bool, progreso, abiertas: dict
-) -> None:
+) -> str:
     """Busca primero en la Consulta Unificada (publica). Solo si la causa no aparece ahi
     y el job trae credenciales, cae a "Mis Causas" (login). Sin credenciales, una causa no
     encontrada en la Unificada es error, igual que antes."""
@@ -192,7 +203,7 @@ async def _sincronizar_publica_luego_privada(
                 await sincronizar(session, sesion_publica, causa, progreso=progreso)
             finally:
                 await sesion_publica.cerrar()
-        return
+        return VISIBILIDAD_PUBLICA
     except CausaNoEncontrada:
         if not privada:
             raise
@@ -208,11 +219,56 @@ async def _sincronizar_publica_luego_privada(
     await progreso("Causa no encontrada en Consulta Unificada; buscando en Mis Causas")
     await sesion_privada.iniciar()
     await sincronizar(session, sesion_privada, causa, privada=True, progreso=progreso)
+    return VISIBILIDAD_PRIVADA
+
+
+async def _procesar_verificacion(job_id: int) -> None:
+    """Comprueba que la causa del job aparezca en Mis Causas del usuario y deja el
+    resultado en `acceso_concedido`. Sin reintentos: hay un request esperando."""
+    async with AsyncSessionLocal() as session:
+        job = await session.get(SyncJob, job_id)
+        competencia = _competencia_job(job)
+        causa = await session.get(COMPETENCIA_MODELO[competencia], _causa_id_job(job, competencia))
+        clase_privada = SESIONES_PRIVADAS[competencia]
+        sesion = clase_privada(
+            descifrar(job.rut_cifrado),
+            descifrar(job.clave_cifrada),
+            job.metodo_login or clase_privada.METODO_CLAVE_PJUD,
+            headless=settings.playwright_headless,
+        )
+        try:
+            await sesion.iniciar()
+            concedido = await sesion.verificar_en_mis_causas(causa.tipo, causa.rol, causa.anio)
+            job.acceso_concedido = concedido
+            job.estado = "completo"
+            if concedido:
+                await registrar_acceso(session, competencia, causa.id, job.huella_acceso)
+            logger.info("Verificacion %s (%s): acceso=%s", job.id, competencia, concedido)
+        except Exception as exc:
+            await session.rollback()
+            job = await session.get(SyncJob, job_id)
+            job.estado = "error"
+            job.error_mensaje = (
+                f"{ERROR_CREDENCIALES}: {exc}" if isinstance(exc, LoginPrivadoError) else f"{type(exc).__name__}: {exc}"
+            )
+            logger.exception("Verificacion %s fallo", job_id)
+        finally:
+            try:
+                await sesion.cerrar()
+            except Exception:
+                logger.exception("Error al cerrar la sesion de verificacion %s", job_id)
+        job.finalizado_en = datetime.now(timezone.utc)
+        _limpiar_credenciales(job)
+        await session.commit()
 
 
 async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
     async with AsyncSessionLocal() as session:
         job = await session.get(SyncJob, job_id)
+        if job.tipo == "verificacion":
+            await session.close()
+            await _procesar_verificacion(job_id)
+            return
         competencia = _competencia_job(job)
         modelo = COMPETENCIA_MODELO[competencia]
         causa_id = _causa_id_job(job, competencia)
@@ -236,12 +292,15 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
                 await progreso("Iniciando sesion en la Oficina Judicial Virtual")
                 await sesion_privada.iniciar()
                 await sincronizar_causa_familia(session, sesion_privada, causa, progreso=progreso)
+                visibilidad = VISIBILIDAD_PRIVADA
             else:
-                await _sincronizar_publica_luego_privada(
+                visibilidad = await _sincronizar_publica_luego_privada(
                     session, sesion_pjud, job, causa, competencia, privada, progreso, sesiones_abiertas
                 )
 
             causa.estado_sync = "Completo"
+            # Consulta Unificada -> publica; solo Mis Causas -> privada (ver api/common/acceso.py).
+            causa.visibilidad = visibilidad
             causa.fecha_ultima_sincronizacion = datetime.now(timezone.utc)
             causa.ultimo_error = None
             # UPDATE explicito: `_reportar_progreso` escribio sync_detalle desde otra

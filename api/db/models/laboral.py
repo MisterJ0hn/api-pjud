@@ -61,6 +61,9 @@ class CausaLaboral(Base):
     # PJUD por si en otra causa trae contenido.
     tramites: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
+    # "publica" = obtenida de la Consulta Unificada; "privada" = solo accesible desde
+    # Mis Causas. NULL (filas previas a esta columna) se trata como privada.
+    visibilidad: Mapped[str | None] = mapped_column(String(10), nullable=True)
     estado_sync: Mapped[str] = mapped_column(String(15), nullable=False, default="Pendiente")
     sync_detalle: Mapped[str | None] = mapped_column(String(300), nullable=True)
     sync_iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

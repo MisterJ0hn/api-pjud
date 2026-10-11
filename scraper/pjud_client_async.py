@@ -31,6 +31,7 @@ import os
 import re
 import time
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 logger = logging.getLogger("pjud.scraper.async")
@@ -1044,6 +1045,28 @@ class PjudSessionAsync(_PjudModalScraper):
         except Exception:
             logger.exception("No se pudo guardar el diagnostico de 'no encontrada'")
 
+    async def _esperar_opcion_tipo_causa(
+        self, valor: str, tipo: str, competencia: str, corte: str, tribunal: str, timeout_ms: int = 10000
+    ) -> None:
+        """`#conTipoCausa` se rellena por AJAX al elegir el tribunal (y solo trae los tipos
+        que ese tribunal ofrece). Espera a que aparezca la opcion pedida; si no aparece,
+        falla con las opciones reales en vez de un timeout generico de 30 s."""
+        page = self._page
+        try:
+            await page.wait_for_function(
+                "v => Array.from(document.querySelectorAll('#conTipoCausa option')).some(o => o.value === v)",
+                arg=valor,
+                timeout=timeout_ms,
+            )
+        except PlaywrightTimeoutError:
+            opciones = await page.eval_on_selector_all(
+                "#conTipoCausa option", "els => els.map(e => e.value + ':' + e.textContent.trim())"
+            )
+            raise RuntimeError(
+                f"El tipo de causa {tipo!r} (valor {valor!r}) no esta entre las opciones de "
+                f"#conTipoCausa para competencia={competencia}, corte={corte}, tribunal={tribunal}: {opciones}"
+            ) from None
+
     async def buscar_y_extraer(
         self, competencia: str, corte: str, tribunal: str, tipo: str, rol, anio, progreso=None
     ) -> dict:
@@ -1059,12 +1082,13 @@ class PjudSessionAsync(_PjudModalScraper):
             await self._cerrar_modales_abiertos()
             await self._seleccionar_competencia_corte(competencia, corte)
             await page.select_option("#conTribunal", tribunal)
-            await page.wait_for_timeout(300)
             tribunal_esperado = await page.eval_on_selector(
                 "#conTribunal",
                 "el => el.selectedOptions.length ? el.selectedOptions[0].textContent.trim() : ''",
             )
-            await page.select_option("#conTipoCausa", self._valor_tipo_publico(tipo))
+            valor_tipo = self._valor_tipo_publico(tipo)
+            await self._esperar_opcion_tipo_causa(valor_tipo, tipo, competencia, corte, tribunal)
+            await page.select_option("#conTipoCausa", valor_tipo)
             await page.fill("#conRolCausa", str(rol))
             await page.fill("#conEraCausa", str(anio))
             await page.click(self.BTN_BUSCAR_PUBLICO)
@@ -1330,6 +1354,64 @@ class PjudSessionPrivada(_PjudModalScraper):
             logger.exception("Error al activar el check de filtros")
         await page.wait_for_timeout(1200)
 
+    async def _filtrar_mis_causas(self, tipo: str, rol, anio) -> None:
+        """Abre Mis Causas -> pestana de la competencia y busca por Rit / Rol / Anio (deja
+        la tabla de resultados lista en el pane)."""
+        page = self._page
+        await self._ir_a_mis_causas()
+        await self._activar_filtros()
+
+        try:
+            if self.TIPO_POR_LABEL:
+                await page.select_option(f"#{self.CAMPO_TIPO}", label=tipo)
+            else:
+                await page.select_option(f"#{self.CAMPO_TIPO}", value=tipo)
+        except Exception:
+            logger.warning("No se pudo seleccionar el tipo '%s' en #%s", tipo, self.CAMPO_TIPO)
+        await page.fill(f"#{self.CAMPO_ROL}", str(rol))
+        await page.fill(f"#{self.CAMPO_ANIO}", str(anio))
+        # El filtro de Estado (multiple) viene por defecto solo en "Tramitacion".
+        # Limpiarlo no basta: hay estados que igual quedan fuera del resultado
+        # (p. ej. "Tramitacion pend." en Familia). Se seleccionan TODAS las
+        # opciones para no excluir ninguna causa.
+        try:
+            valores_estado = await page.eval_on_selector_all(
+                f"#{self.CAMPO_ESTADO} option",
+                "els => els.map(o => o.value)",
+            )
+            if valores_estado:
+                await page.select_option(f"#{self.CAMPO_ESTADO}", valores_estado)
+            else:
+                await page.select_option(f"#{self.CAMPO_ESTADO}", [])
+        except Exception:
+            pass
+
+        await page.click(f"#{self.BTN_BUSCAR}")
+        await page.wait_for_timeout(3500)
+
+    async def verificar_en_mis_causas(self, tipo: str, rol, anio) -> bool:
+        """True si la causa aparece en Mis Causas del usuario logueado. No abre el detalle.
+
+        Limitacion: Mis Causas no filtra por tribunal, asi que una misma RIT en otro
+        tribunal del mismo abogado daria un falso positivo (igual que en el sync)."""
+        page = self._page
+        logger.info("Verificando acceso a causa %s %s-%s-%s", self.NOMBRE_COMPETENCIA, tipo, rol, anio)
+        try:
+            await self._filtrar_mis_causas(tipo, rol, anio)
+            objetivo = self._texto_fila_privada(tipo, rol, anio)
+            return bool(
+                await page.evaluate(
+                    """([objetivo, paneId]) => {
+                        const norm = s => (s || '').replace(/\\s+/g, '').toUpperCase();
+                        return Array.from(document.querySelectorAll('#' + paneId + ' td'))
+                            .some(td => norm(td.textContent).includes(norm(objetivo)));
+                    }""",
+                    [objetivo, self.PANE_COMPETENCIA],
+                )
+            )
+        finally:
+            await page.wait_for_timeout(PAUSA_ENTRE_CONSULTAS_MS)
+
     async def buscar_y_extraer_privada(
         self, tipo: str, rol, anio, progreso=None, tribunal_nombre: str | None = None
     ) -> dict:
@@ -1345,36 +1427,7 @@ class PjudSessionPrivada(_PjudModalScraper):
         logger.info("Buscando causa privada %s %s-%s-%s", self.NOMBRE_COMPETENCIA, tipo, rol, anio)
         try:
             await self._reportar("Buscando la causa en Mis Causas")
-            await self._ir_a_mis_causas()
-            await self._activar_filtros()
-
-            try:
-                if self.TIPO_POR_LABEL:
-                    await page.select_option(f"#{self.CAMPO_TIPO}", label=tipo)
-                else:
-                    await page.select_option(f"#{self.CAMPO_TIPO}", value=tipo)
-            except Exception:
-                logger.warning("No se pudo seleccionar el tipo '%s' en #%s", tipo, self.CAMPO_TIPO)
-            await page.fill(f"#{self.CAMPO_ROL}", str(rol))
-            await page.fill(f"#{self.CAMPO_ANIO}", str(anio))
-            # El filtro de Estado (multiple) viene por defecto solo en "Tramitacion".
-            # Limpiarlo no basta: hay estados que igual quedan fuera del resultado
-            # (p. ej. "Tramitacion pend." en Familia). Se seleccionan TODAS las
-            # opciones para no excluir ninguna causa.
-            try:
-                valores_estado = await page.eval_on_selector_all(
-                    f"#{self.CAMPO_ESTADO} option",
-                    "els => els.map(o => o.value)",
-                )
-                if valores_estado:
-                    await page.select_option(f"#{self.CAMPO_ESTADO}", valores_estado)
-                else:
-                    await page.select_option(f"#{self.CAMPO_ESTADO}", [])
-            except Exception:
-                pass
-
-            await page.click(f"#{self.BTN_BUSCAR}")
-            await page.wait_for_timeout(3500)
+            await self._filtrar_mis_causas(tipo, rol, anio)
 
             objetivo = self._texto_fila_privada(tipo, rol, anio)
             abierta = await page.evaluate(

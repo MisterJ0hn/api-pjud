@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import Principal, obtener_principal
+from api.common.acceso import exigir_acceso
 from api.civil.cripto import cifrar
 from api.penal.repository import (
     buscar_causa,
@@ -20,6 +21,7 @@ from api.penal.schemas import (
     MovimientosPenalResponse,
     MovimientosRequest,
     CausaPenalRequest,
+    ConsultarPenalRequest,
     SincronizarPenalRequest,
     SincronizarResponse,
 )
@@ -102,7 +104,7 @@ async def sincronizar_penal(
 
 @router.post("/consultar_penal", response_model=ConsultarPenalResponse)
 async def consultar_penal(
-    body: CausaPenalRequest,
+    body: ConsultarPenalRequest,
     principal: Principal = Depends(obtener_principal),
     session: AsyncSession = Depends(get_session),
 ):
@@ -110,8 +112,7 @@ async def consultar_penal(
     if tipo is None:
         raise CampoInvalidoError("tipo")
     causa = await buscar_causa(session, body.corte, body.tribunal, tipo, body.rol, body.anio)
-    if causa is None:
-        raise NoEncontradoError()
+    await exigir_acceso(session, "penal", causa, body.rut, body.clave, body.metodo_login)
 
     detalle = await construir_causa_detalle(session, causa)
     return ConsultarPenalResponse(causa=detalle)

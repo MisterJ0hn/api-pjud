@@ -29,3 +29,11 @@ class NoEncontradoError(Exception):
     """404 -- la causa o el cuaderno solicitado no existe. Extension propia: no definida
     literalmente en Solicitud.md, pero necesaria (no hay otro codigo razonable para
     "consultar_civil sobre una causa nunca sincronizada")."""
+
+
+class CredencialesPjudInvalidasError(Exception):
+    """403 -- el login en PJUD con el rut/clave entregados fallo."""
+
+
+class VerificacionAccesoError(Exception):
+    """503 -- no se pudo verificar el acceso a la causa en PJUD (fallo del scraper)."""

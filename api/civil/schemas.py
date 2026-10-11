@@ -9,6 +9,17 @@ class CausaRequest(BaseModel):
     anio: int
 
 
+class ConsultarCausaRequest(CausaRequest):
+    """Request de consultar_{civil,familia,laboral,cobranza}. Sin credenciales solo se
+    entregan causas publicas; con `rut` + `clave` + `metodo_login` (1 = Clave Poder
+    Judicial, 2 = Clave Unica) tambien las privadas que aparezcan en Mis Causas del
+    abogado (ver api/common/acceso.py)."""
+
+    rut: str | None = None
+    clave: str | None = None
+    metodo_login: int | None = None
+
+
 class SincronizarCivilRequest(CausaRequest):
     """Request de sincronizar_civil. Si trae `rut` + `clave` + `metodo_login`, la causa
     se sincroniza en modo privado (con login en la Oficina Judicial Virtual) en vez de

@@ -13,6 +13,14 @@ class CausaPenalRequest(BaseModel):
     anio: int
 
 
+class ConsultarPenalRequest(CausaPenalRequest):
+    """Request de consultar_penal; mismas credenciales opcionales que `ConsultarCausaRequest`."""
+
+    rut: str | None = None
+    clave: str | None = None
+    metodo_login: int | None = None
+
+
 class SincronizarPenalRequest(CausaPenalRequest):
     """Request de sincronizar_penal. Admite sincronizacion PUBLICA (sin credenciales) o
     PRIVADA si trae `rut` + `clave` + `metodo_login` (1 = Clave Poder Judicial, 2 =
