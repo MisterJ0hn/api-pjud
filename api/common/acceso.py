@@ -20,6 +20,7 @@ import hmac
 import time
 from datetime import datetime, timedelta, timezone
 
+from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -169,3 +170,55 @@ async def exigir_acceso(session: AsyncSession, competencia: str, causa, rut, cla
         motivo="verificacion_en_curso",
         detalle="La verificacion de acceso a la causa en PJUD sigue en curso; reintente en unos segundos.",
     )
+
+
+# --- Token firmado para las URLs de documentos (/public/...) ------------------------
+# Los documentos se piden por GET (sin cuerpo), asi que no pueden llevar credenciales. Los de
+# causas no publicas exigen `?t=<expira>.<firma>`, que solo se agrega a las URLs de una
+# respuesta que ya paso `exigir_acceso`.
+
+
+def _firma(competencia: str, causa_id, expira: int) -> str:
+    clave = settings.pjud_cred_secret_key
+    if not clave:
+        raise RuntimeError("PJUD_CRED_SECRET_KEY no configurada")
+    mensaje = f"doc:{competencia}:{causa_id}:{expira}".encode("utf-8")
+    return hmac.new(clave.encode("utf-8"), mensaje, hashlib.sha256).hexdigest()
+
+
+def generar_token_documento(competencia: str, causa_id) -> str:
+    expira = int(time.time()) + settings.documento_token_minutos * 60
+    return f"{expira}.{_firma(competencia, causa_id, expira)}"
+
+
+def token_documento_valido(competencia: str, causa_id, token: str | None) -> bool:
+    if not token or "." not in token:
+        return False
+    expira_txt, firma = token.split(".", 1)
+    if not expira_txt.isdigit() or int(expira_txt) < time.time():
+        return False
+    return hmac.compare_digest(firma, _firma(competencia, causa_id, int(expira_txt)))
+
+
+def proteger_respuesta(respuesta, competencia: str, causa):
+    """Agrega el token a toda URL de documento propia (`{public_base_url}/public/...`) dentro
+    de `respuesta` (modelo Pydantic, mutado in situ), salvo que la causa sea publica."""
+    if causa.visibilidad == VISIBILIDAD_PUBLICA:
+        return respuesta
+    prefijo = settings.public_base_url.rstrip("/") + "/public/"
+    sufijo = "?t=" + generar_token_documento(competencia, causa.id)
+
+    def _recorrer(valor):
+        if isinstance(valor, str):
+            return valor + sufijo if valor.startswith(prefijo) and "?t=" not in valor else valor
+        if isinstance(valor, list):
+            return [_recorrer(v) for v in valor]
+        if isinstance(valor, dict):
+            return {k: _recorrer(v) for k, v in valor.items()}
+        if isinstance(valor, BaseModel):
+            for nombre in type(valor).model_fields:
+                setattr(valor, nombre, _recorrer(getattr(valor, nombre)))
+        return valor
+
+    _recorrer(respuesta)
+    return respuesta

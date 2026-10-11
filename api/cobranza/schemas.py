@@ -93,6 +93,9 @@ class MovimientosRequest(BaseModel):
     # Cobranza es causa-wide (no recibe "cuadeno"), a diferencia de civil -- ver
     # Solicitud Cobranza.md.
     identificador: str
+    rut: str | None = None
+    clave: str | None = None
+    metodo_login: int | None = None
 
 
 class HistoriaDocItem(BaseModel):

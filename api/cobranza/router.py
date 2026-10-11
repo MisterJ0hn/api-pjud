@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import Principal, obtener_principal
-from api.common.acceso import exigir_acceso
+from api.common.acceso import exigir_acceso, proteger_respuesta
 from api.civil.cripto import cifrar
 from api.civil.schemas import CausaRequest, ConsultarCausaRequest
 from api.cobranza.repository import (
@@ -106,7 +106,7 @@ async def consultar_cobranza(
     await exigir_acceso(session, "cobranza", causa, body.rut, body.clave, body.metodo_login)
 
     detalle = await construir_causa_detalle(session, causa)
-    return ConsultarCobranzaResponse(causa=detalle)
+    return proteger_respuesta(ConsultarCobranzaResponse(causa=detalle), "cobranza", causa)
 
 
 @router.post("/consultar_movimientos_cobranza", response_model=MovimientosCobranzaResponse)
@@ -121,7 +121,6 @@ async def consultar_movimientos_cobranza(
         raise CampoInvalidoError("identificador")
 
     causa = (await session.execute(select(CausaCobranza).where(CausaCobranza.id == causa_id))).scalar_one_or_none()
-    if causa is None:
-        raise NoEncontradoError()
+    await exigir_acceso(session, "cobranza", causa, body.rut, body.clave, body.metodo_login)
 
-    return await construir_movimientos(session, causa)
+    return proteger_respuesta(await construir_movimientos(session, causa), "cobranza", causa)

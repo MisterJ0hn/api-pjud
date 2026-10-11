@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import Principal, obtener_principal
-from api.common.acceso import exigir_acceso
+from api.common.acceso import exigir_acceso, proteger_respuesta
 from api.civil.cripto import cifrar
 from api.common.rut import normalizar_credenciales
 from api.civil.repository import (
@@ -116,7 +116,7 @@ async def consultar_civil(
     await exigir_acceso(session, "civil", causa, body.rut, body.clave, body.metodo_login)
 
     detalle = await construir_causa_detalle(session, causa)
-    return ConsultarCivilResponse(causa=detalle)
+    return proteger_respuesta(ConsultarCivilResponse(causa=detalle), "civil", causa)
 
 
 @router.post("/consultar_movimientos_civil", response_model=MovimientosResponse)
@@ -131,11 +131,10 @@ async def consultar_movimientos_civil(
         raise CampoInvalidoError("identificador")
 
     causa = (await session.execute(select(Causa).where(Causa.id == causa_id))).scalar_one_or_none()
-    if causa is None:
-        raise NoEncontradoError()
+    await exigir_acceso(session, "civil", causa, body.rut, body.clave, body.metodo_login)
 
     cuaderno = await obtener_cuaderno(session, causa.id, body.cuadeno)
     if cuaderno is None:
         raise NoEncontradoError()
 
-    return await construir_movimientos(session, causa, cuaderno)
+    return proteger_respuesta(await construir_movimientos(session, causa, cuaderno), "civil", causa)

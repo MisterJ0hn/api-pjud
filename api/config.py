@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # al worker, y cuanto dura una verificacion exitosa en cache (por causa + credenciales).
     acceso_verificacion_timeout_s: int = 120
     acceso_cache_minutos: int = 30
+    # Vigencia del token firmado en las URLs de documentos de causas no publicas.
+    documento_token_minutos: int = 60
 
     playwright_headless: bool = False
 

@@ -112,6 +112,9 @@ class MovimientosRequest(BaseModel):
     identificador: str
     # Nombre de campo preservado tal cual llego en Solicitud.md (con typo: "cuadeno").
     cuadeno: int
+    rut: str | None = None
+    clave: str | None = None
+    metodo_login: int | None = None
 
 
 class HistoriaAnexoItem(BaseModel):

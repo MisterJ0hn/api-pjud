@@ -1,11 +1,12 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.common.acceso import VISIBILIDAD_PUBLICA, token_documento_valido
 from api.db.models.causas import Causa, Cuaderno
 from api.db.models.cobranza import CausaCobranza, DocumentoCobranza
 from api.db.models.documentos import Documento
@@ -14,7 +15,35 @@ from api.db.models.laboral import CausaLaboral, DocumentoLaboral
 from api.db.models.penal import CausaPenal, DocumentoPenal
 from api.db.session_async import get_session
 
-router = APIRouter(prefix="/public", tags=["documentos"])
+_MODELO_POR_COMPETENCIA = {
+    "civil": Causa,
+    "familia": CausaFamilia,
+    "laboral": CausaLaboral,
+    "cobranza": CausaCobranza,
+    "penal": CausaPenal,
+}
+
+
+async def exigir_token_documento(request: Request, session: AsyncSession = Depends(get_session)) -> None:
+    """Los documentos de causas publicas se sirven libres; los de cualquier otra exigen el
+    token firmado `?t=` que `consultar_*` agrega a las URLs (ver api/common/acceso.py).
+    Si la causa no existe se deja pasar: el handler responde 404 como siempre."""
+    causa_id = request.path_params.get("causa_id")
+    primer_segmento = request.url.path.removeprefix("/public/").split("/", 1)[0]
+    competencia = primer_segmento if primer_segmento in _MODELO_POR_COMPETENCIA else "civil"
+    try:
+        cid = uuid.UUID(causa_id)
+    except (ValueError, TypeError, AttributeError):
+        return
+    modelo = _MODELO_POR_COMPETENCIA[competencia]
+    visibilidad = (await session.execute(select(modelo.visibilidad).where(modelo.id == cid))).first()
+    if visibilidad is None or visibilidad[0] == VISIBILIDAD_PUBLICA:
+        return
+    if not token_documento_valido(competencia, cid, request.query_params.get("t")):
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+
+router = APIRouter(prefix="/public", tags=["documentos"], dependencies=[Depends(exigir_token_documento)])
 
 _MIME_POR_EXTENSION = {
     ".jpg": "image/jpeg",
