@@ -213,7 +213,15 @@ async def _sincronizar_publica_luego_privada(
     )
     abiertas["privada"] = sesion_privada
     await progreso("Causa no encontrada en Consulta Unificada; buscando en Mis Causas")
-    await sesion_privada.iniciar()
+    try:
+        await sesion_privada.iniciar()
+    except LoginPrivadoError as exc:
+        # Sin esto el error solo diria "login fallido" y ocultaria que el problema de fondo es
+        # que la Consulta Unificada no devolvio la causa.
+        raise LoginPrivadoError(
+            f"La causa no se encontro en la Consulta Unificada y no se pudo iniciar sesion para "
+            f"buscarla en Mis Causas: {exc}"
+        ) from exc
     await sincronizar(session, sesion_privada, causa, privada=True, progreso=progreso)
     return VISIBILIDAD_PRIVADA
 

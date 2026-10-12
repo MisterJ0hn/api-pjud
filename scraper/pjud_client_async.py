@@ -62,6 +62,8 @@ INDEX_PRIVADO_URL = "https://oficinajudicialvirtual.pjud.cl/indexN.php"
 COMPETENCIAS = {"civil": "3", "laboral": "4", "penal": "5", "cobranza": "6"}
 
 PAUSA_ENTRE_CONSULTAS_MS = 4000
+# Espera maxima a que cargue el detalle de una causa en Mis Causas.
+TIMEOUT_DETALLE_PRIVADA_MS = 120_000
 
 
 def _normalizar_tribunal(nombre: str | None) -> str:
@@ -1425,7 +1427,11 @@ class PjudSessionPrivada(_PjudModalScraper):
                 return {"encontrada": False}
 
             try:
-                await page.wait_for_selector(f"#{self.MODAL_DETALLE}.in", state="visible", timeout=15000)
+                # Hay causas (p. ej. C-13550-2026, medida prejudicial) cuyo detalle en Mis Causas
+                # tarda ~40 s en cargar; con 15 s se abandonaba un detalle que si llegaba.
+                await page.wait_for_selector(
+                    f"#{self.MODAL_DETALLE}.in", state="visible", timeout=TIMEOUT_DETALLE_PRIVADA_MS
+                )
             except Exception:
                 return {"encontrada": True, "error": "No se pudo abrir el detalle de la causa privada"}
             await page.wait_for_timeout(800)
