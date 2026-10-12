@@ -2,9 +2,10 @@
 
 Reglas:
 1. Causa marcada `publica` (obtenida de la Consulta Unificada) -> se entrega sin mas.
-2. Cualquier otra (`privada` o sin marcar) solo se entrega a los usuarios (RUT) registrados en
-   `usuario_<competencia>_permitido`. Si el RUT no viene o no esta registrado -> 403 "causa
-   privada". Causa inexistente -> 404.
+2. Causa inexistente o todavia no descargada (nunca se sincronizo con exito) -> 404.
+3. Causa descargada y no publica (`privada` o sin marcar): solo se entrega a los usuarios (RUT)
+   registrados en `usuario_<competencia>_permitido`. Si el RUT no viene o no esta registrado
+   -> 403 "causa privada".
 
 Quien escribe esa tabla es el worker, al sincronizar con credenciales (ver `worker/main.py`):
 - sync exitoso y la causa solo aparece en "Mis Causas" -> `permitir_usuario`.
@@ -65,11 +66,14 @@ async def _usuario_permitido(session: AsyncSession, competencia: str, causa_id, 
 
 
 async def exigir_acceso(session: AsyncSession, competencia: str, causa, rut: str | None) -> None:
-    """Lanza `NoEncontradoError` (404) si la causa no existe y `CausaPrivadaError` (403) si es
-    privada y `rut` no esta registrado como usuario permitido. Un RUT mal formado es 400."""
+    """Lanza `NoEncontradoError` (404) si la causa no existe o aun no se descargo, y
+    `CausaPrivadaError` (403) si esta descargada, es privada y `rut` no esta registrado como
+    usuario permitido. Un RUT mal formado es 400."""
     rut_normalizado = normalizar_rut(rut) if rut else None
 
-    if causa is None:
+    # `fecha_ultima_sincronizacion` solo se setea al terminar un sync con exito: una causa que
+    # solo existe como fila encolada (o cuyo primer sync fallo) todavia no tiene datos.
+    if causa is None or causa.fecha_ultima_sincronizacion is None:
         raise NoEncontradoError()
     if causa.visibilidad == VISIBILIDAD_PUBLICA:
         return
