@@ -1389,29 +1389,6 @@ class PjudSessionPrivada(_PjudModalScraper):
         await page.click(f"#{self.BTN_BUSCAR}")
         await page.wait_for_timeout(3500)
 
-    async def verificar_en_mis_causas(self, tipo: str, rol, anio) -> bool:
-        """True si la causa aparece en Mis Causas del usuario logueado. No abre el detalle.
-
-        Limitacion: Mis Causas no filtra por tribunal, asi que una misma RIT en otro
-        tribunal del mismo abogado daria un falso positivo (igual que en el sync)."""
-        page = self._page
-        logger.info("Verificando acceso a causa %s %s-%s-%s", self.NOMBRE_COMPETENCIA, tipo, rol, anio)
-        try:
-            await self._filtrar_mis_causas(tipo, rol, anio)
-            objetivo = self._texto_fila_privada(tipo, rol, anio)
-            return bool(
-                await page.evaluate(
-                    """([objetivo, paneId]) => {
-                        const norm = s => (s || '').replace(/\\s+/g, '').toUpperCase();
-                        return Array.from(document.querySelectorAll('#' + paneId + ' td'))
-                            .some(td => norm(td.textContent).includes(norm(objetivo)));
-                    }""",
-                    [objetivo, self.PANE_COMPETENCIA],
-                )
-            )
-        finally:
-            await page.wait_for_timeout(PAUSA_ENTRE_CONSULTAS_MS)
-
     async def buscar_y_extraer_privada(
         self, tipo: str, rol, anio, progreso=None, tribunal_nombre: str | None = None
     ) -> dict:

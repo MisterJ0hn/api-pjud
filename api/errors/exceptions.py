@@ -31,9 +31,5 @@ class NoEncontradoError(Exception):
     "consultar_civil sobre una causa nunca sincronizada")."""
 
 
-class CredencialesPjudInvalidasError(Exception):
-    """403 -- el login en PJUD con el rut/clave entregados fallo."""
-
-
-class VerificacionAccesoError(Exception):
-    """503 -- no se pudo verificar el acceso a la causa en PJUD (fallo del scraper)."""
+class CausaPrivadaError(Exception):
+    """403 -- la causa es privada y el usuario (rut) no figura entre los usuarios permitidos."""

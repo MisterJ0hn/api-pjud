@@ -14,11 +14,9 @@ class CausaPenalRequest(BaseModel):
 
 
 class ConsultarPenalRequest(CausaPenalRequest):
-    """Request de consultar_penal; mismas credenciales opcionales que `ConsultarCausaRequest`."""
+    """Request de consultar_penal; mismo `rut` opcional que `ConsultarCausaRequest`."""
 
     rut: str | None = None
-    clave: str | None = None
-    metodo_login: int | None = None
 
 
 class SincronizarPenalRequest(CausaPenalRequest):
@@ -78,8 +76,6 @@ class ConsultarPenalResponse(BaseModel):
 class MovimientosRequest(BaseModel):
     identificador: str
     rut: str | None = None
-    clave: str | None = None
-    metodo_login: int | None = None
 
 
 class HistoriaDocItem(BaseModel):

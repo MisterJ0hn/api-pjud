@@ -94,8 +94,6 @@ class MovimientosRequest(BaseModel):
     # Solicitud Cobranza.md.
     identificador: str
     rut: str | None = None
-    clave: str | None = None
-    metodo_login: int | None = None
 
 
 class HistoriaDocItem(BaseModel):

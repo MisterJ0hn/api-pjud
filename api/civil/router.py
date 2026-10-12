@@ -113,7 +113,7 @@ async def consultar_civil(
     session: AsyncSession = Depends(get_session),
 ):
     causa = await buscar_causa(session, COMPETENCIA, body.corte, body.tribunal, body.tipo, body.rol, body.anio)
-    await exigir_acceso(session, "civil", causa, body.rut, body.clave, body.metodo_login)
+    await exigir_acceso(session, "civil", causa, body.rut)
 
     detalle = await construir_causa_detalle(session, causa)
     return proteger_respuesta(ConsultarCivilResponse(causa=detalle), "civil", causa)
@@ -131,7 +131,7 @@ async def consultar_movimientos_civil(
         raise CampoInvalidoError("identificador")
 
     causa = (await session.execute(select(Causa).where(Causa.id == causa_id))).scalar_one_or_none()
-    await exigir_acceso(session, "civil", causa, body.rut, body.clave, body.metodo_login)
+    await exigir_acceso(session, "civil", causa, body.rut)
 
     cuaderno = await obtener_cuaderno(session, causa.id, body.cuadeno)
     if cuaderno is None:

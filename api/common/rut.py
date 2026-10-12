@@ -45,7 +45,14 @@ def normalizar_credenciales(
         raise CampoInvalidoError("clave")
     if metodo_login not in (1, 2):
         raise CampoInvalidoError("metodo_login")
+    return normalizar_rut(rut), clave, metodo_login
 
+
+def normalizar_rut(rut: str | None) -> str:
+    """'cuerpo-DV' en mayusculas. El DV se calcula si no vino y se valida si vino; RUT vacio
+    o mal formado -> 400 `Error en campo [rut]`."""
+    if not rut:
+        raise CampoInvalidoError("rut")
     match = _RUT_RE.match(rut.strip().replace(".", "").replace(" ", "").upper())
     if match is None:
         raise CampoInvalidoError("rut")
@@ -53,5 +60,4 @@ def normalizar_credenciales(
     esperado = digito_verificador(cuerpo)
     if dv is not None and dv != esperado:
         raise CampoInvalidoError("rut")
-
-    return f"{cuerpo}-{esperado}", clave, metodo_login
+    return f"{cuerpo}-{esperado}"

@@ -79,8 +79,6 @@ class MovimientosRequest(BaseModel):
     # trae "cuadeno" en este request.
     identificador: str
     rut: str | None = None
-    clave: str | None = None
-    metodo_login: int | None = None
 
 
 class MovimientoDocItem(BaseModel):

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, SmallInteger, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, SmallInteger, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,13 +46,6 @@ class SyncJob(Base):
     rut_cifrado: Mapped[str | None] = mapped_column(String(500), nullable=True)
     clave_cifrada: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     metodo_login: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
-
-    # "sync" = sincronizar la causa; "verificacion" = solo comprobar que la causa aparece en
-    # Mis Causas del usuario (consultar_*). El resultado queda en `acceso_concedido`.
-    tipo: Mapped[str] = mapped_column(String(15), nullable=False, default="sync", server_default="sync")
-    acceso_concedido: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    # HMAC de rut+clave+metodo (ver api/common/acceso.py); permite deduplicar y cachear.
-    huella_acceso: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     encolado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

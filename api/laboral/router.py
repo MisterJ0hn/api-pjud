@@ -103,7 +103,7 @@ async def consultar_laboral(
     session: AsyncSession = Depends(get_session),
 ):
     causa = await buscar_causa(session, body.corte, body.tribunal, body.tipo, body.rol, body.anio)
-    await exigir_acceso(session, "laboral", causa, body.rut, body.clave, body.metodo_login)
+    await exigir_acceso(session, "laboral", causa, body.rut)
 
     detalle = await construir_causa_detalle(session, causa)
     return proteger_respuesta(ConsultarLaboralResponse(causa=detalle), "laboral", causa)
@@ -121,6 +121,6 @@ async def consultar_movimientos_laboral(
         raise CampoInvalidoError("identificador")
 
     causa = (await session.execute(select(CausaLaboral).where(CausaLaboral.id == causa_id))).scalar_one_or_none()
-    await exigir_acceso(session, "laboral", causa, body.rut, body.clave, body.metodo_login)
+    await exigir_acceso(session, "laboral", causa, body.rut)
 
     return proteger_respuesta(await construir_movimientos(session, causa), "laboral", causa)

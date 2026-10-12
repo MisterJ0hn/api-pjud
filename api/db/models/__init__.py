@@ -1,4 +1,10 @@
-from api.db.models.acceso import AccesoVerificado
+from api.db.models.acceso import (
+    UsuarioCivilPermitido,
+    UsuarioCobranzaPermitido,
+    UsuarioFamiliaPermitido,
+    UsuarioLaboralPermitido,
+    UsuarioPenalPermitido,
+)
 from api.db.models.auth import ClienteApi, TokenAcceso, Usuario
 from api.db.models.cabecera import AnexoCausa, InformacionReceptor
 from api.db.models.causas import Causa, Cuaderno
@@ -76,7 +82,11 @@ from api.db.models.sync_job import SyncJob
 from api.db.models.tribunales import TribunalCatalogo
 
 __all__ = [
-    "AccesoVerificado",
+    "UsuarioCivilPermitido",
+    "UsuarioCobranzaPermitido",
+    "UsuarioFamiliaPermitido",
+    "UsuarioLaboralPermitido",
+    "UsuarioPenalPermitido",
     "ClienteApi",
     "TokenAcceso",
     "Usuario",

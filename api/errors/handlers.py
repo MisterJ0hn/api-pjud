@@ -6,11 +6,10 @@ from fastapi.responses import JSONResponse
 
 from api.errors.exceptions import (
     CampoInvalidoError,
+    CausaPrivadaError,
     ConflictoSincronizacionError,
-    CredencialesPjudInvalidasError,
     NoAutorizadoError,
     NoEncontradoError,
-    VerificacionAccesoError,
 )
 
 logger = logging.getLogger("pjud.api")
@@ -55,14 +54,9 @@ def registrar_exception_handlers(app: FastAPI) -> None:
     async def _handle_no_encontrado(request: Request, exc: NoEncontradoError):
         return _respuesta(404, "No encontrado")
 
-    @app.exception_handler(CredencialesPjudInvalidasError)
-    async def _handle_credenciales_pjud(request: Request, exc: CredencialesPjudInvalidasError):
-        return _respuesta(403, "Credenciales de PJUD invalidas")
-
-    @app.exception_handler(VerificacionAccesoError)
-    async def _handle_verificacion_acceso(request: Request, exc: VerificacionAccesoError):
-        logger.warning("503 verificacion de acceso: %s", exc)
-        return _respuesta(503, "No se pudo verificar el acceso a la causa; reintente")
+    @app.exception_handler(CausaPrivadaError)
+    async def _handle_causa_privada(request: Request, exc: CausaPrivadaError):
+        return _respuesta(403, "Causa privada", motivo="causa_privada")
 
     @app.exception_handler(Exception)
     async def _handle_error_no_controlado(request: Request, exc: Exception):

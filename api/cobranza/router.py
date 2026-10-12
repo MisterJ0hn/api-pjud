@@ -103,7 +103,7 @@ async def consultar_cobranza(
     session: AsyncSession = Depends(get_session),
 ):
     causa = await buscar_causa(session, body.corte, body.tribunal, body.tipo, body.rol, body.anio)
-    await exigir_acceso(session, "cobranza", causa, body.rut, body.clave, body.metodo_login)
+    await exigir_acceso(session, "cobranza", causa, body.rut)
 
     detalle = await construir_causa_detalle(session, causa)
     return proteger_respuesta(ConsultarCobranzaResponse(causa=detalle), "cobranza", causa)
@@ -121,6 +121,6 @@ async def consultar_movimientos_cobranza(
         raise CampoInvalidoError("identificador")
 
     causa = (await session.execute(select(CausaCobranza).where(CausaCobranza.id == causa_id))).scalar_one_or_none()
-    await exigir_acceso(session, "cobranza", causa, body.rut, body.clave, body.metodo_login)
+    await exigir_acceso(session, "cobranza", causa, body.rut)
 
     return proteger_respuesta(await construir_movimientos(session, causa), "cobranza", causa)

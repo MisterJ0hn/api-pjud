@@ -112,7 +112,7 @@ async def consultar_penal(
     if tipo is None:
         raise CampoInvalidoError("tipo")
     causa = await buscar_causa(session, body.corte, body.tribunal, tipo, body.rol, body.anio)
-    await exigir_acceso(session, "penal", causa, body.rut, body.clave, body.metodo_login)
+    await exigir_acceso(session, "penal", causa, body.rut)
 
     detalle = await construir_causa_detalle(session, causa)
     return proteger_respuesta(ConsultarPenalResponse(causa=detalle), "penal", causa)
@@ -130,6 +130,6 @@ async def consultar_movimientos_penal(
         raise CampoInvalidoError("identificador")
 
     causa = (await session.execute(select(CausaPenal).where(CausaPenal.id == causa_id))).scalar_one_or_none()
-    await exigir_acceso(session, "penal", causa, body.rut, body.clave, body.metodo_login)
+    await exigir_acceso(session, "penal", causa, body.rut)
 
     return proteger_respuesta(await construir_movimientos(session, causa), "penal", causa)

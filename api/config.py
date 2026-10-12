@@ -19,10 +19,6 @@ class Settings(BaseSettings):
     sync_lock_timeout_minutes: int = 15
     sync_min_interval_minutes: int = 30
 
-    # Verificacion de acceso a causas privadas en `consultar_*`: cuanto espera el endpoint
-    # al worker, y cuanto dura una verificacion exitosa en cache (por causa + credenciales).
-    acceso_verificacion_timeout_s: int = 120
-    acceso_cache_minutos: int = 30
     # Vigencia del token firmado en las URLs de documentos de causas no publicas.
     documento_token_minutos: int = 60
 

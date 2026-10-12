@@ -15,10 +15,10 @@ from sqlalchemy import select, update
 
 from api.civil.cripto import descifrar
 from api.common.acceso import (
-    ERROR_CREDENCIALES,
     VISIBILIDAD_PRIVADA,
     VISIBILIDAD_PUBLICA,
-    registrar_acceso,
+    permitir_usuario,
+    revocar_usuario,
 )
 from api.config import settings
 from api.db.models.causas import Causa
@@ -118,8 +118,6 @@ async def _barrer_jobs_huerfanos() -> None:
             job.error_mensaje = "Job huerfano: worker reiniciado a medio proceso"
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)
-            if job.tipo == "verificacion":
-                continue
             competencia = _competencia_job(job)
             causa = await session.get(COMPETENCIA_MODELO[competencia], _causa_id_job(job, competencia))
             if causa is not None and causa.estado_sync == "Sincronizando":
@@ -136,9 +134,7 @@ async def _tomar_siguiente_job() -> int | None:
             await session.execute(
                 select(SyncJob)
                 .where(SyncJob.estado == "pendiente")
-                # Las verificaciones de acceso (un usuario esperando la respuesta de
-                # consultar_*) pasan delante de las sincronizaciones.
-                .order_by((SyncJob.tipo == "verificacion").desc(), SyncJob.encolado_en)
+                .order_by(SyncJob.encolado_en)
                 .limit(1)
                 .with_for_update(skip_locked=True)
             )
@@ -222,53 +218,9 @@ async def _sincronizar_publica_luego_privada(
     return VISIBILIDAD_PRIVADA
 
 
-async def _procesar_verificacion(job_id: int) -> None:
-    """Comprueba que la causa del job aparezca en Mis Causas del usuario y deja el
-    resultado en `acceso_concedido`. Sin reintentos: hay un request esperando."""
-    async with AsyncSessionLocal() as session:
-        job = await session.get(SyncJob, job_id)
-        competencia = _competencia_job(job)
-        causa = await session.get(COMPETENCIA_MODELO[competencia], _causa_id_job(job, competencia))
-        clase_privada = SESIONES_PRIVADAS[competencia]
-        sesion = clase_privada(
-            descifrar(job.rut_cifrado),
-            descifrar(job.clave_cifrada),
-            job.metodo_login or clase_privada.METODO_CLAVE_PJUD,
-            headless=settings.playwright_headless,
-        )
-        try:
-            await sesion.iniciar()
-            concedido = await sesion.verificar_en_mis_causas(causa.tipo, causa.rol, causa.anio)
-            job.acceso_concedido = concedido
-            job.estado = "completo"
-            if concedido:
-                await registrar_acceso(session, competencia, causa.id, job.huella_acceso)
-            logger.info("Verificacion %s (%s): acceso=%s", job.id, competencia, concedido)
-        except Exception as exc:
-            await session.rollback()
-            job = await session.get(SyncJob, job_id)
-            job.estado = "error"
-            job.error_mensaje = (
-                f"{ERROR_CREDENCIALES}: {exc}" if isinstance(exc, LoginPrivadoError) else f"{type(exc).__name__}: {exc}"
-            )
-            logger.exception("Verificacion %s fallo", job_id)
-        finally:
-            try:
-                await sesion.cerrar()
-            except Exception:
-                logger.exception("Error al cerrar la sesion de verificacion %s", job_id)
-        job.finalizado_en = datetime.now(timezone.utc)
-        _limpiar_credenciales(job)
-        await session.commit()
-
-
 async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
     async with AsyncSessionLocal() as session:
         job = await session.get(SyncJob, job_id)
-        if job.tipo == "verificacion":
-            await session.close()
-            await _procesar_verificacion(job_id)
-            return
         competencia = _competencia_job(job)
         modelo = COMPETENCIA_MODELO[competencia]
         causa_id = _causa_id_job(job, competencia)
@@ -276,6 +228,9 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
         etiqueta = causa.rol_formateado if competencia == "civil" else causa.rit
 
         privada = job.rut_cifrado is not None
+        # RUT del usuario que pidio el sync (ya normalizado); se lee antes de que las
+        # credenciales se limpien al terminar el job.
+        rut_usuario = descifrar(job.rut_cifrado) if privada else None
         sesion_privada: PjudSessionPrivada | None = None
         sesiones_abiertas: dict = {}
         progreso = functools.partial(_reportar_progreso, causa_id, competencia)
@@ -301,6 +256,9 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             causa.estado_sync = "Completo"
             # Consulta Unificada -> publica; solo Mis Causas -> privada (ver api/common/acceso.py).
             causa.visibilidad = visibilidad
+            # Causa que solo se ve en Mis Causas: este usuario queda autorizado a consultarla.
+            if visibilidad == VISIBILIDAD_PRIVADA and rut_usuario is not None:
+                await permitir_usuario(session, competencia, causa_id, rut_usuario)
             causa.fecha_ultima_sincronizacion = datetime.now(timezone.utc)
             causa.ultimo_error = None
             # UPDATE explicito: `_reportar_progreso` escribio sync_detalle desde otra
@@ -317,6 +275,9 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             causa = await session.get(modelo, causa_id)
             causa.estado_sync = "Error"
             causa.ultimo_error = str(exc)
+            # Sync con credenciales y la causa no aparece en Mis Causas del usuario: pierde el acceso.
+            if isinstance(exc, CausaNoEncontrada) and rut_usuario is not None:
+                await revocar_usuario(session, competencia, causa_id, rut_usuario)
             # UPDATE explicito: `_reportar_progreso` pudo escribir sync_detalle desde otra
             # sesion durante el intento; una asignacion ORM normal no lo detectaria si el
             # valor en memoria de `causa` ya era None (ver comentario en el camino exitoso).

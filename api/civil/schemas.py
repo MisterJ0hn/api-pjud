@@ -10,14 +10,11 @@ class CausaRequest(BaseModel):
 
 
 class ConsultarCausaRequest(CausaRequest):
-    """Request de consultar_{civil,familia,laboral,cobranza}. Sin credenciales solo se
-    entregan causas publicas; con `rut` + `clave` + `metodo_login` (1 = Clave Poder
-    Judicial, 2 = Clave Unica) tambien las privadas que aparezcan en Mis Causas del
-    abogado (ver api/common/acceso.py)."""
+    """Request de consultar_{civil,familia,laboral,cobranza}. Sin `rut` solo se entregan causas
+    publicas; las privadas solo al `rut` registrado como usuario permitido de la causa (lo
+    registra la sincronizacion con credenciales; ver api/common/acceso.py)."""
 
     rut: str | None = None
-    clave: str | None = None
-    metodo_login: int | None = None
 
 
 class SincronizarCivilRequest(CausaRequest):
@@ -113,8 +110,6 @@ class MovimientosRequest(BaseModel):
     # Nombre de campo preservado tal cual llego en Solicitud.md (con typo: "cuadeno").
     cuadeno: int
     rut: str | None = None
-    clave: str | None = None
-    metodo_login: int | None = None
 
 
 class HistoriaAnexoItem(BaseModel):
