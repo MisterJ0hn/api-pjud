@@ -242,7 +242,7 @@ async def _reemplazar_anexos_causa(session: AsyncSession, sesion_pjud, causa: Ca
                 codigo=_valor(v, "Código", "Codigo", "Cód.", "Cod."),
                 tipo_documento=_valor(v, "Tipo Documento", "Tipo de Documento", "Tipo"),
                 cantidad=_valor(v, "Cantidad", "Cant."),
-                observacion_documento=_valor(v, "Observación Documento", "Observacion Documento", "Observación", "Observacion"),
+                observacion_documento=_valor(v, "Observación del Documento", "Observacion del Documento", "Observación Documento", "Observacion Documento", "Observación", "Observacion"),
                 contenido_hash=h,
             )
         )

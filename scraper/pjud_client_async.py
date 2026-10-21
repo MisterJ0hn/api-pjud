@@ -524,7 +524,9 @@ class _PjudModalScraper:
         page = self._page
         if not target or not target.startswith("#"):
             return None
-        sub_id = target[1:]
+        # Apelaciones: el href del Anexo de la causa trae sufijo (`#modalAnexoCausaApelaciones.php`)
+        # pero el id real del popup no (CONFIRMADO en vivo, C.A. Valparaiso 4046/2026).
+        sub_id = target[1:].removesuffix(".php")
         try:
             # `.first`, no `page.click` a secas: en causas Laboral tipo "Reclamo" (p. ej.
             # I-740-2026) PJUD duplica el <a href="#modalTextoDemandaLaboral"> en una
