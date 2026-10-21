@@ -51,3 +51,9 @@ class UsuarioPenalPermitido(_UsuarioPermitidoMixin, Base):
     __tablename__ = "usuario_penal_permitido"
     causa_id: Mapped[uuid.UUID] = _causa_fk("causas_penal")
     __table_args__ = (UniqueConstraint("causa_id", "rut", name="uq_usuario_penal_permitido"),)
+
+
+class UsuarioApelacionesPermitido(_UsuarioPermitidoMixin, Base):
+    __tablename__ = "usuario_apelaciones_permitido"
+    causa_id: Mapped[uuid.UUID] = _causa_fk("causas_apelaciones")
+    __table_args__ = (UniqueConstraint("causa_id", "rut", name="uq_usuario_apelaciones_permitido"),)

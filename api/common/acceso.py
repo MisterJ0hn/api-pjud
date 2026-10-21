@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.common.rut import normalizar_rut
 from api.config import settings
 from api.db.models.acceso import (
+    UsuarioApelacionesPermitido,
     UsuarioCivilPermitido,
     UsuarioCobranzaPermitido,
     UsuarioFamiliaPermitido,
@@ -41,6 +42,7 @@ MODELO_USUARIO_PERMITIDO = {
     "laboral": UsuarioLaboralPermitido,
     "cobranza": UsuarioCobranzaPermitido,
     "penal": UsuarioPenalPermitido,
+    "apelaciones": UsuarioApelacionesPermitido,
 }
 
 

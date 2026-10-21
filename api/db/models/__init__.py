@@ -1,4 +1,17 @@
+from api.db.models.apelaciones import (
+    AnexoCausaApelaciones,
+    CausaApelaciones,
+    DocumentoApelaciones,
+    LitiganteApelaciones,
+    MovimientoApelaciones,
+    MovimientoApelacionesAnexo,
+    MovimientoApelacionesDoc,
+    MovimientoApelacionesGeoImagen,
+    RegistroApelaciones,
+    TextoApelaciones,
+)
 from api.db.models.acceso import (
+    UsuarioApelacionesPermitido,
     UsuarioCivilPermitido,
     UsuarioCobranzaPermitido,
     UsuarioFamiliaPermitido,
@@ -82,6 +95,17 @@ from api.db.models.sync_job import SyncJob
 from api.db.models.tribunales import TribunalCatalogo
 
 __all__ = [
+    "UsuarioApelacionesPermitido",
+    "CausaApelaciones",
+    "DocumentoApelaciones",
+    "MovimientoApelaciones",
+    "MovimientoApelacionesDoc",
+    "MovimientoApelacionesAnexo",
+    "MovimientoApelacionesGeoImagen",
+    "LitiganteApelaciones",
+    "TextoApelaciones",
+    "AnexoCausaApelaciones",
+    "RegistroApelaciones",
     "UsuarioCivilPermitido",
     "UsuarioCobranzaPermitido",
     "UsuarioFamiliaPermitido",

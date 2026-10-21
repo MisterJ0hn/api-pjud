@@ -14,3 +14,12 @@ class CorteItem(BaseModel):
 
 class CatalogoTribunalesResponse(BaseModel):
     cortes: list[CorteItem]
+
+
+class CorteApelacionesItem(BaseModel):
+    id: int
+    nombre: str
+
+
+class CatalogoCortesResponse(BaseModel):
+    cortes: list[CorteApelacionesItem]

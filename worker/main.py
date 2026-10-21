@@ -21,6 +21,7 @@ from api.common.acceso import (
     revocar_usuario,
 )
 from api.config import settings
+from api.db.models.apelaciones import CausaApelaciones
 from api.db.models.causas import Causa
 from api.db.models.cobranza import CausaCobranza
 from api.db.models.familia import CausaFamilia
@@ -32,6 +33,8 @@ from api.logging_config import configurar_logger
 from scraper.pjud_client_async import (
     CausaNoEncontrada,
     LoginPrivadoError,
+    PjudSessionApelacionesAsync,
+    PjudSessionApelacionesPrivada,
     PjudSessionAsync,
     PjudSessionCobranzaAsync,
     PjudSessionCobranzaPrivada,
@@ -42,6 +45,7 @@ from scraper.pjud_client_async import (
     PjudSessionPenalPrivada,
     PjudSessionPrivada,
 )
+from worker.sync_apelaciones import LibroAmbiguoError, sincronizar_causa_apelaciones
 from worker.sync_civil import sincronizar_causa
 from worker.sync_cobranza import sincronizar_causa_cobranza
 from worker.sync_familia import sincronizar_causa_familia
@@ -63,6 +67,7 @@ COMPETENCIA_MODELO = {
     "laboral": CausaLaboral,
     "cobranza": CausaCobranza,
     "penal": CausaPenal,
+    "apelaciones": CausaApelaciones,
 }
 
 
@@ -75,6 +80,8 @@ def _competencia_job(job: SyncJob) -> str:
         return "cobranza"
     if job.causa_penal_id is not None:
         return "penal"
+    if job.causa_apelaciones_id is not None:
+        return "apelaciones"
     return "civil"
 
 
@@ -87,6 +94,8 @@ def _causa_id_job(job: SyncJob, competencia: str):
         return job.causa_cobranza_id
     if competencia == "penal":
         return job.causa_penal_id
+    if competencia == "apelaciones":
+        return job.causa_apelaciones_id
     return job.causa_id
 
 
@@ -165,6 +174,7 @@ SESIONES_PUBLICAS = {
     "laboral": PjudSessionLaboralAsync,
     "cobranza": PjudSessionCobranzaAsync,
     "penal": PjudSessionPenalAsync,
+    "apelaciones": PjudSessionApelacionesAsync,
 }
 SESIONES_PRIVADAS = {
     "civil": PjudSessionPrivada,
@@ -172,12 +182,14 @@ SESIONES_PRIVADAS = {
     "laboral": PjudSessionLaboralPrivada,
     "cobranza": PjudSessionCobranzaPrivada,
     "penal": PjudSessionPenalPrivada,
+    "apelaciones": PjudSessionApelacionesPrivada,
 }
 SINCRONIZADORES = {
     "civil": sincronizar_causa,
     "laboral": sincronizar_causa_laboral,
     "cobranza": sincronizar_causa_cobranza,
     "penal": sincronizar_causa_penal,
+    "apelaciones": sincronizar_causa_apelaciones,
 }
 
 
@@ -277,7 +289,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             _limpiar_credenciales(job)
             await session.commit()
             logger.info("Job %s (%s) completado", job.id, etiqueta)
-        except (CausaNoEncontrada, LoginPrivadoError) as exc:
+        except (CausaNoEncontrada, LoginPrivadoError, LibroAmbiguoError) as exc:
             await session.rollback()
             job = await session.get(SyncJob, job_id)
             causa = await session.get(modelo, causa_id)

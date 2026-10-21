@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from api.apelaciones.router import router as apelaciones_router
 from api.auth.router import router as auth_router
 from api.catalogo.router import router as catalogo_router
 from api.civil.router import router as civil_router
@@ -18,6 +19,7 @@ app = FastAPI(title="PJUD API", version="1.0")
 registrar_exception_handlers(app)
 
 app.include_router(auth_router)
+app.include_router(apelaciones_router)
 app.include_router(catalogo_router)
 app.include_router(civil_router)
 app.include_router(cobranza_router)

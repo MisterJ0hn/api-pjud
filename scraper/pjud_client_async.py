@@ -1714,3 +1714,327 @@ class PjudSessionPenalPrivada(PjudSessionPrivada):
 
     def _texto_fila_privada(self, tipo: str, rol, anio) -> str:
         return f"-{rol}-{anio}"
+
+
+# --- Corte de Apelaciones -----------------------------------------------------
+
+# Mismo extractor de filas que el generico, pero el color del icono se lee de cualquier
+# `<i style="color:...">` dentro del form/link (en Apelaciones los iconos de documento no
+# traen `title="Descargar ..."`, confirmado en vivo 2026-10-21).
+#
+# Ademas devuelve `iconos_cls` / `iconos_color` por columna: el popup "Texto" marca "Doc.
+# Principal" con un icono `fa-check` / `fa-times` coloreado que no es un 0/1 (`iconos`).
+JS_EXTRAER_FILAS_APELACIONES = (
+    JS_EXTRAER_FILAS_CON_ENLACES
+    .replace('i[title*="Descargar"]', 'i[style*="color"]')
+    .replace("const iconos = {};", "const iconos = {}; const iconos_cls = {}; const iconos_color = {};")
+    .replace(
+        "if (icono) {",
+        "if (icono) {\n"
+        "                iconos_cls[header] = icono.className;\n"
+        r"                iconos_color[header] = ((/(?:^|;)\s*color\s*:\s*([^;]+)/i.exec("
+        "icono.getAttribute('style') || '')) || [])[1] || null;",
+    )
+    .replace(
+        "return {valores, enlaces, colores, posts, colores_posts, popups, targets, iconos};",
+        "return {valores, enlaces, colores, posts, colores_posts, popups, targets, iconos, iconos_cls, iconos_color};",
+    )
+)
+
+# Cabecera del modal de Apelaciones: tablas `table.table-titulos` con celdas
+# `<td><strong>Etiqueta:</strong> valor</td>`. Cubre la pestana "Recurso" (Libro, Fecha,
+# Estado Recurso, Estado Procesal, Ubicacion, Recurso, Corte + iconos Certificado de
+# Envio / Ebook / Texto / Anexo) y "Expediente Primera Instancia" (Causa Origen, Tribunal,
+# Caratulado, Materia, Ruc, Fecha Ingreso). `descargas` = forms GET (con el color del
+# icono si lo hay); `submodales` = iconos que abren un popup (Texto, Anexo).
+JS_EXTRAER_CABECERA_APELACIONES = """(modalId) => {
+    const modal = document.getElementById(modalId);
+    const colorDe = el => {
+        const i = el.querySelector('i[style*="color"]');
+        if (!i) return null;
+        const m = /(?:^|;)\\s*color\\s*:\\s*([^;]+)/i.exec(i.getAttribute('style') || '');
+        if (!m) return null;
+        let c = m[1].trim().toLowerCase();
+        const rgb = /^rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/.exec(c);
+        if (rgb) c = '#' + [rgb[1], rgb[2], rgb[3]].map(n => (+n).toString(16).padStart(2, '0')).join('');
+        return c || null;
+    };
+    const campos = {}, descargas = [], submodales = [];
+    modal.querySelectorAll('table.table-titulos td').forEach(td => {
+        const strong = td.querySelector('strong');
+        const label = strong ? strong.textContent.trim().replace(/\\s*:\\s*$/, '') : '';
+        if (!label) return;
+        const form = td.querySelector('form');
+        const modalLink = td.querySelector('a[data-toggle="modal"]');
+        const clone = td.cloneNode(true);
+        const s = clone.querySelector('strong');
+        if (s) s.remove();
+        const texto = clone.textContent.replace(/\\s+/g, ' ').trim();
+        if (form && (form.getAttribute('method') || 'get').toLowerCase() === 'get') {
+            const input = form.querySelector('input');
+            if (input && input.name) {
+                const url = new URL(form.getAttribute('action'), location.href);
+                url.searchParams.set(input.name, input.value);
+                descargas.push({label, url: url.toString(), color: colorDe(td)});
+            }
+        } else if (modalLink && !texto) {
+            submodales.push({label, target: modalLink.getAttribute('href'), color: colorDe(td)});
+        } else {
+            campos[label] = texto;
+        }
+    });
+    return {campos, descargas, submodales};
+}"""
+
+
+class _ExtraccionApelaciones:
+    """Extraccion del modal "Detalle Causa Apelaciones", comun a los modos publico y privado
+    (mixin: va ANTES de la sesion en el MRO para sobreescribir `_extraer_detalle_de_modal`).
+
+    CONFIRMADO en vivo (2026-10-21, Consulta Unificada publica, C.A. de Santiago): modal
+    `modalDetalleApelaciones` (se abre con `detalleCausaApelaciones(jwt)`); pestanas
+    Recurso / Expediente Primera Instancia y, dentro de Recurso, Movimientos
+    (`#movimientosApe`: Folio/Doc./Anexo/Tramite/Descripcion/Fecha/Sala/Estado/Georeferencia,
+    "Doc." = forms GET `docCausaApelaciones.php?valorDoc=` y `docCertificadoEscrito.php?dtaCert=`) /
+    Litigantes (`#litigantesApe`: Sujeto/Rut/Persona/Nombre o Razon Social) / Exhortos
+    (`#ExhortosApe`) / Incompetencia (`#IncompetenciaApe`). Popup "Texto" =
+    `modalAnexoRecursoApelaciones` (tabla Doc. Principal/Doc./Fecha/Referencia, form
+    `formAnexRecurso` con `target` = id e input `dtaDoc`; "Doc. Principal" es un icono
+    fa-check / fa-times).
+
+    NO CONFIRMADO (sin ejemplos con datos): popup "Anexo" de la cabecera (columnas esperadas
+    segun la solicitud: Codigo/Tipo Documento/Cantidad/Observacion), popup de Anexo de un
+    movimiento (`modalAnexoEscritoApelaciones`), popup de Georeferencia
+    (`modalGeoReferenciaApelaciones`, mismos ids que Familia) y las filas de Exhortos /
+    Incompetencia. Se extraen de forma generica y el worker mapea columnas por alias.
+    """
+
+    MODALES_ANEXO_HISTORIA = ("modalAnexoEscritoApelaciones",)
+    MODAL_GEOREFERENCIA = "modalGeoReferenciaApelaciones"
+    MODAL_GEOREFERENCIA_NOTIF = None
+    PREFIJOS_HISTORIA = ("movimiento",)
+    PREFIJOS_ANEXO_POPUP_EXTRA = ()
+    MODALES_DESCARGA_CLICK: frozenset[str] = frozenset()
+
+    async def _extraer_filas_con_enlaces(self, selector: str) -> list[dict]:
+        return await self._page.eval_on_selector_all(f"{selector} table", JS_EXTRAER_FILAS_APELACIONES)
+
+    async def _esperar_contenido_detalle(self, modal_id: str, timeout_ms: int = 30000) -> None:
+        try:
+            await self._page.wait_for_function(
+                "(id) => { const m = document.getElementById(id);"
+                " return !!m && m.querySelectorAll('table.table-titulos td strong').length > 0; }",
+                arg=modal_id,
+                timeout=timeout_ms,
+            )
+        except PlaywrightTimeoutError:
+            logger.warning("El detalle de Apelaciones (%s) no cargo su cabecera en %d ms", modal_id, timeout_ms)
+        await self._page.wait_for_timeout(700)
+
+    async def _extraer_detalle_de_modal(self, modal_id: str) -> dict:
+        page = self._page
+        await self._esperar_contenido_detalle(modal_id)
+
+        await self._reportar("Obteniendo cabecera")
+        cab = await page.evaluate(JS_EXTRAER_CABECERA_APELACIONES, modal_id)
+
+        submodales = {}
+        if cab.get("submodales"):
+            await self._reportar("Obteniendo documentos del recurso")
+        for sub in cab.get("submodales", []):
+            tabla = await self._procesar_submodal(modal_id, sub["target"] or "")
+            if tabla is not None:
+                submodales[sub["label"]] = tabla
+
+        # Pestanas por nombre (los ids de los panes pueden cambiar entre Consulta Unificada y
+        # Mis Causas): Movimientos / Litigantes / Exhortos / Incompetencia.
+        tabs = await page.evaluate(
+            """(modalId) => Array.from(document.getElementById(modalId).querySelectorAll('a[data-toggle="tab"]'))
+                .map(a => ({nombre: a.textContent.trim(), href: a.getAttribute('href')}))""",
+            modal_id,
+        )
+
+        def pane_de(*prefijos: str) -> str | None:
+            for t in tabs:
+                n = (t["nombre"] or "").strip().lower()
+                if t["href"] and t["href"].startswith("#") and any(n.startswith(p) for p in prefijos):
+                    return t["href"][1:]
+            return None
+
+        resultado: dict = {
+            "cabecera": {
+                "campos": cab.get("campos", {}),
+                "descargas": cab.get("descargas", []),
+                "submodales": submodales,
+            },
+            "movimientos": {"headers": [], "filas": []},
+            "litigantes": {"headers": [], "filas": []},
+            "exhortos": {"headers": [], "filas": []},
+            "incompetencia": {"headers": [], "filas": []},
+        }
+
+        pane_mov = pane_de("movimiento")
+        if pane_mov:
+            await self._reportar("Obteniendo movimientos")
+            try:
+                await page.click(f'#{modal_id} a[href="#{pane_mov}"]')
+            except Exception:
+                pass
+            await page.wait_for_timeout(500)
+            tablas = await self._extraer_filas_con_enlaces(f"#{pane_mov}")
+            seccion = tablas[0] if tablas else {"headers": [], "filas": []}
+            await self._extraer_anexos_popup_historia(pane_mov, seccion)
+            if self.MODAL_GEOREFERENCIA:
+                await self._extraer_georeferencia_popup_historia(pane_mov, seccion)
+            resultado["movimientos"] = seccion
+        else:
+            logger.warning("Modal de Apelaciones sin pestana Movimientos (pestanas: %s)", [t["nombre"] for t in tabs])
+
+        for clave, etiqueta, prefijos in (
+            ("litigantes", "litigantes", ("litigant",)),
+            ("exhortos", "exhortos", ("exhorto",)),
+            ("incompetencia", "incompetencia", ("incompetencia",)),
+        ):
+            pane = pane_de(*prefijos)
+            if not pane:
+                continue
+            await self._reportar(f"Obteniendo {etiqueta}")
+            tablas = await self._extraer_filas_con_enlaces(f"#{pane}")
+            if tablas:
+                resultado[clave] = tablas[0]
+
+        await page.evaluate(JS_CERRAR_MODAL, modal_id)
+        await page.wait_for_timeout(300)
+        return resultado
+
+
+class PjudSessionApelacionesAsync(_ExtraccionApelaciones, PjudSessionAsync):
+    """Consulta Unificada publica, competencia "Corte Apelaciones" (value 2 de
+    `#competencia`). Confirmado en vivo (2026-10-21): `#conCorte` trae las 17 cortes (ver
+    api/apelaciones/cortes.py); `#conTipoBusApe` = 0 "Recurso Corte Apelaciones" (default) /
+    1 "Expediente de 1a Instancia"; `#conTipoCausa` (Libro/Tipo) queda deshabilitado en el modo
+    Recurso, asi que la busqueda es solo Corte + Rol + Ano y devuelve UNA FILA POR LIBRO
+    ("Civil-23414-2026", "Proteccion-1000-2026", ...) en `#dtaTableDetalle` (columnas: lupa /
+    Rol / Corte / Caratulado / Fecha Ingreso / Estado Causa / Fecha Ubicacion / Ubicacion)."""
+
+    BTN_BUSCAR_PUBLICO = "#btnConConsulta"
+    VALOR_COMPETENCIA = "2"
+
+    async def _seleccionar_formulario(self, corte: int) -> None:
+        page = self._page
+        await self._ensure_rit_tab()
+        await page.select_option("#competencia", self.VALOR_COMPETENCIA)
+        await page.wait_for_function("document.querySelectorAll('#conCorte option').length > 2", timeout=15000)
+        await page.select_option("#conTipoBusApe", "0")
+        await page.wait_for_timeout(400)
+        # Cambiar el tipo de busqueda puede reiniciar la corte: se elige despues y se verifica.
+        for _ in range(3):
+            await page.select_option("#conCorte", str(corte))
+            await page.wait_for_timeout(500)
+            if await page.eval_on_selector("#conCorte", "el => el.value") == str(corte):
+                return
+        raise RuntimeError(f"No se pudo seleccionar la corte {corte} en #conCorte")
+
+    async def _leer_resultados(self) -> list[dict]:
+        return await self._page.evaluate(
+            """() => Array.from(document.querySelectorAll('#dtaTableDetalle tbody tr'))
+                .filter(tr => tr.cells.length > 7)
+                .map((tr, idx) => ({idx, rol: tr.cells[1].textContent.trim(),
+                                    corte: tr.cells[2].textContent.trim()}))"""
+        )
+
+    async def buscar_y_extraer_apelaciones(self, corte: int, libro: str | None, rol, anio, progreso=None) -> dict:
+        """Busca el recurso en la Consulta Unificada y extrae el modal de detalle.
+        Devuelve {"encontrada": False} si no hay resultados; {"encontrada": False, "libros":
+        [...]} si hay varios libros y no se indico `libro` (o el indicado no esta); o
+        {"encontrada": True, **detalle}."""
+        from api.apelaciones.cortes import clave_texto
+
+        page = self._page
+        self._progreso = progreso
+        logger.info("Buscando recurso de apelaciones corte=%s libro=%r rol=%s anio=%s", corte, libro, rol, anio)
+        try:
+            await self._cerrar_modales_abiertos()
+            await self._seleccionar_formulario(corte)
+            await page.fill("#conRolCausa", str(rol))
+            await page.fill("#conEraCausa", str(anio))
+            await page.click(self.BTN_BUSCAR_PUBLICO)
+
+            # La tabla se llena por AJAX: se reintenta antes de dar la causa por no encontrada.
+            filas: list[dict] = []
+            for espera_ms in (1500, 1500, 2000, 2000, 3000):
+                await page.wait_for_timeout(espera_ms)
+                filas = await self._leer_resultados()
+                if filas:
+                    break
+
+            patron = re.compile(r"^(.*?)\s*-\s*(\d+)\s*-\s*(\d+)$")
+            candidatas = []
+            for f in filas:
+                m = patron.match(f["rol"])
+                if m and int(m.group(2)) == int(rol) and int(m.group(3)) == int(anio):
+                    candidatas.append({**f, "libro": m.group(1).strip()})
+            if not candidatas:
+                logger.info("Recurso corte=%s rol=%s anio=%s no encontrado", corte, rol, anio)
+                return {"encontrada": False}
+
+            if libro:
+                k = clave_texto(libro)
+                elegidas = [c for c in candidatas if clave_texto(c["libro"]) == k]
+                if not elegidas:
+                    return {"encontrada": False, "libros": [c["libro"] for c in candidatas]}
+            else:
+                elegidas = candidatas
+                if len(elegidas) > 1:
+                    return {"encontrada": False, "libros": [c["libro"] for c in elegidas]}
+            elegida = elegidas[0]
+
+            await page.evaluate(
+                """(idx) => {
+                    const tr = Array.from(document.querySelectorAll('#dtaTableDetalle tbody tr'))
+                        .filter(tr => tr.cells.length > 7)[idx];
+                    const a = tr.querySelector('a.toggle-modal') || tr.querySelector('a,i');
+                    a.click();
+                }""",
+                elegida["idx"],
+            )
+
+            modal_id = None
+            for _ in range(40):
+                await page.wait_for_timeout(500)
+                modal_id = await page.evaluate(JS_MODAL_VISIBLE)
+                if modal_id:
+                    break
+            if not modal_id:
+                return {"encontrada": True, "error": "No se pudo abrir el detalle del recurso"}
+
+            detalle = await self._extraer_detalle_de_modal(modal_id)
+            detalle["libro_fila"] = elegida["libro"]
+            return {"encontrada": True, **detalle}
+        finally:
+            self._progreso = None
+            await page.wait_for_timeout(PAUSA_ENTRE_CONSULTAS_MS)
+
+
+class PjudSessionApelacionesPrivada(_ExtraccionApelaciones, PjudSessionPrivada):
+    """Pestana "Apelaciones" de Mis Causas.
+
+    NO CONFIRMADO EN VIVO (sin credenciales para validarlo): ids extrapolados de Civil/Penal
+    ("MisCau" + sufijo "Ape"). El modal de detalle es el mismo que el de la Consulta
+    Unificada, asi que la extraccion es la del mixin. Revisar los ids contra una sesion real
+    antes de confiar en sincronizaciones privadas de Apelaciones. `tipo` = libro."""
+
+    NOMBRE_COMPETENCIA = "Apelaciones"
+    TAB_COMPETENCIA = "apelacionesTab"
+    PANE_COMPETENCIA = "tab2"
+    CHECK_FILTROS = "filtroMisCauApe"
+    CAMPO_TIPO = "tipoMisCauApe"
+    CAMPO_ROL = "rolMisCauApe"
+    CAMPO_ANIO = "anhoMisCauApe"
+    CAMPO_ESTADO = "estadoCausaMisCauApe"
+    BTN_BUSCAR = "btnConsultaMisCauApe"
+    MODAL_DETALLE = "modalDetalleMisCauApelaciones"
+    TIPO_POR_LABEL = True
+
+    def _texto_fila_privada(self, tipo: str, rol, anio) -> str:
+        return f"{tipo}-{rol}-{anio}" if tipo else f"-{rol}-{anio}"
