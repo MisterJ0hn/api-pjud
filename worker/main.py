@@ -45,6 +45,7 @@ from scraper.pjud_client_async import (
     PjudSessionPenalPrivada,
     PjudSessionPrivada,
 )
+from worker.callback import preparar_callback, run_callbacks
 from worker.sync_apelaciones import LibroAmbiguoError, sincronizar_causa_apelaciones
 from worker.sync_civil import sincronizar_causa
 from worker.sync_cobranza import sincronizar_causa_cobranza
@@ -57,6 +58,10 @@ logger = configurar_logger("pjud.worker", "worker.log")
 POLL_INTERVAL_S = 5
 PACING_ENTRE_JOBS_S = 7
 MAX_INTENTOS = 2
+
+# `mensaje_error` del callback cuando falla el login en PJUD / cuando es cualquier otra falla.
+MENSAJE_ERROR_LOGIN = "Fallo al ingresar con clave de usuario a pjud"
+MENSAJE_ERROR_GENERICO = "Fallo la sincronizacion"
 
 # "civil" | "familia" | "laboral" | "cobranza" -- que causa apunta el job (ver
 # `SyncJob`, XOR de las 4 columnas causa_id/causa_familia_id/causa_laboral_id/
@@ -127,6 +132,7 @@ async def _barrer_jobs_huerfanos() -> None:
             job.error_mensaje = "Job huerfano: worker reiniciado a medio proceso"
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)
+            preparar_callback(job, MENSAJE_ERROR_GENERICO)
             competencia = _competencia_job(job)
             causa = await session.get(COMPETENCIA_MODELO[competencia], _causa_id_job(job, competencia))
             if causa is not None and causa.estado_sync == "Sincronizando":
@@ -287,6 +293,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             job.estado = "completo"
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)
+            preparar_callback(job)
             await session.commit()
             logger.info("Job %s (%s) completado", job.id, etiqueta)
         except (CausaNoEncontrada, LoginPrivadoError, LibroAmbiguoError) as exc:
@@ -306,6 +313,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
             job.error_mensaje = str(exc)
             job.finalizado_en = datetime.now(timezone.utc)
             _limpiar_credenciales(job)
+            preparar_callback(job, MENSAJE_ERROR_LOGIN if isinstance(exc, LoginPrivadoError) else str(exc))
             await session.commit()
             logger.warning("Job %s: %s (%s)", job.id, type(exc).__name__, exc)
         except Exception as exc:
@@ -327,6 +335,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
                 job.error_mensaje = str(exc)
                 job.finalizado_en = datetime.now(timezone.utc)
                 _limpiar_credenciales(job)
+                preparar_callback(job, MENSAJE_ERROR_GENERICO)
             await session.commit()
         finally:
             sesion_privada = sesion_privada or sesiones_abiertas.get("privada")
@@ -344,6 +353,7 @@ async def run() -> None:
     await sesion_pjud.iniciar()
     logger.info("Worker de sincronizacion iniciado (headless=%s)", settings.playwright_headless)
 
+    tarea_callbacks = asyncio.create_task(run_callbacks())
     try:
         while True:
             job_id = await _tomar_siguiente_job()
@@ -354,6 +364,7 @@ async def run() -> None:
             await _procesar_job(sesion_pjud, job_id)
             await asyncio.sleep(PACING_ENTRE_JOBS_S + random.uniform(0, 2))
     finally:
+        tarea_callbacks.cancel()
         await sesion_pjud.cerrar()
 
 

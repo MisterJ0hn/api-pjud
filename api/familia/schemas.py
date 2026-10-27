@@ -1,9 +1,11 @@
 from pydantic import BaseModel, Field
 
+from api.common.callback import CallbackMixin
+
 from api.civil.schemas import CausaRequest
 
 
-class SincronizarFamiliaRequest(CausaRequest):
+class SincronizarFamiliaRequest(CallbackMixin, CausaRequest):
     """Request de sincronizar_familia. Las causas de Familia son SIEMPRE privadas (con
     login en la Oficina Judicial Virtual), asi que `rut` + `clave` + `metodo_login` son
     OBLIGATORIOS. `corte` y `tribunal` se siguen enviando pero solo forman parte de la
@@ -20,6 +22,8 @@ class SincronizarFamiliaRequest(CausaRequest):
 class SincronizarResponse(BaseModel):
     exito: bool = True
     code: int = 200
+    # Id de la sincronizacion: es el que llega en el callback_url (si se pidio).
+    job_id: int | None = None
 
 
 class DocumentoRef(BaseModel):

@@ -1,9 +1,11 @@
 from pydantic import BaseModel, Field
 
+from api.common.callback import CallbackMixin
+
 from api.civil.schemas import CausaRequest, GeoReferenciaItem
 
 
-class SincronizarLaboralRequest(CausaRequest):
+class SincronizarLaboralRequest(CallbackMixin, CausaRequest):
     """Request de sincronizar_laboral. A diferencia de Familia (siempre privada), Laboral
     admite sincronizacion PUBLICA (Consulta Unificada) o PRIVADA -- igual que Civil: si
     trae `rut` + `clave` + `metodo_login` se sincroniza con login en la Oficina Judicial
@@ -22,6 +24,8 @@ class SincronizarLaboralRequest(CausaRequest):
 class SincronizarResponse(BaseModel):
     exito: bool = True
     code: int = 200
+    # Id de la sincronizacion: es el que llega en el callback_url (si se pidio).
+    job_id: int | None = None
 
 
 class DocumentoRef(BaseModel):

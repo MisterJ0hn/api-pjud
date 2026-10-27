@@ -47,6 +47,7 @@ from api.db.models.movimientos import (
     PiezaExhorto,
     PiezaExhortoAnexo,
 )
+from api.common.callback import marcar_completo_omitido
 from api.db.models.sync_job import SyncJob
 
 CAMPO_ESTADO_SINCRONIZANDO = "Sincronizando"
@@ -133,19 +134,27 @@ async def encolar_sync_job(
     rut_cifrado: str | None = None,
     clave_cifrada: str | None = None,
     metodo_login: int | None = None,
-) -> None:
-    session.add(
-        SyncJob(
-            causa_id=causa_id,
-            estado="pendiente",
-            rut_cifrado=rut_cifrado,
-            clave_cifrada=clave_cifrada,
-            metodo_login=metodo_login,
-        )
+    callback_url: str | None = None,
+    omitida: bool = False,
+) -> int:
+    """Encola el job y devuelve su id. `omitida=True` es la sincronizacion que no hace falta
+    (causa al dia): el job nace terminado y solo sirve para entregar el callback."""
+    job = SyncJob(
+        causa_id=causa_id,
+        estado="pendiente",
+        rut_cifrado=rut_cifrado,
+        clave_cifrada=clave_cifrada,
+        metodo_login=metodo_login,
+        callback_url=callback_url,
     )
+    if omitida:
+        marcar_completo_omitido(job)
+    session.add(job)
     await session.commit()
+    job_id = job.id
     await session.execute(text("NOTIFY sync_jobs"))
     await session.commit()
+    return job_id
 
 
 def _doc_ref(doc: Documento | None, causa_id, cuaderno_numero: int | None = None) -> DocumentoRef | None:

@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from api.common.callback import CallbackMixin
+
 from api.civil.schemas import GeoReferenciaItem
 
 
@@ -20,7 +22,7 @@ class ConsultarApelacionesRequest(CausaApelacionesRequest):
     rut: str | None = None
 
 
-class SincronizarApelacionesRequest(CausaApelacionesRequest):
+class SincronizarApelacionesRequest(CallbackMixin, CausaApelacionesRequest):
     """PUBLICA (sin credenciales) o PRIVADA con `rut` + `clave` + `metodo_login` (1 = Clave
     Poder Judicial, 2 = Clave Unica)."""
 
@@ -32,6 +34,8 @@ class SincronizarApelacionesRequest(CausaApelacionesRequest):
 class SincronizarResponse(BaseModel):
     exito: bool = True
     code: int = 200
+    # Id de la sincronizacion: es el que llega en el callback_url (si se pidio).
+    job_id: int | None = None
 
 
 class DocColorItem(BaseModel):

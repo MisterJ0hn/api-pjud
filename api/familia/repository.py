@@ -37,6 +37,7 @@ from api.db.models.familia import (
     NotificacionFamilia,
     PlazoFamilia,
 )
+from api.common.callback import marcar_completo_omitido
 from api.db.models.sync_job import SyncJob
 
 CAMPO_ESTADO_SINCRONIZANDO = "Sincronizando"
@@ -113,20 +114,33 @@ async def intentar_lock_sincronizacion(session: AsyncSession, causa_id, timeout_
 
 
 async def encolar_sync_job(
-    session: AsyncSession, causa_familia_id, *, rut_cifrado: str, clave_cifrada: str, metodo_login: int
-) -> None:
-    session.add(
-        SyncJob(
-            causa_familia_id=causa_familia_id,
-            estado="pendiente",
-            rut_cifrado=rut_cifrado,
-            clave_cifrada=clave_cifrada,
-            metodo_login=metodo_login,
-        )
+    session: AsyncSession,
+    causa_familia_id,
+    *,
+    rut_cifrado: str | None = None,
+    clave_cifrada: str | None = None,
+    metodo_login: int | None = None,
+    callback_url: str | None = None,
+    omitida: bool = False,
+) -> int:
+    """Encola el job y devuelve su id. `omitida=True` es la sincronizacion que no hace falta
+    (causa al dia): el job nace terminado y solo sirve para entregar el callback."""
+    job = SyncJob(
+        causa_familia_id=causa_familia_id,
+        estado="pendiente",
+        rut_cifrado=rut_cifrado,
+        clave_cifrada=clave_cifrada,
+        metodo_login=metodo_login,
+        callback_url=callback_url,
     )
+    if omitida:
+        marcar_completo_omitido(job)
+    session.add(job)
     await session.commit()
+    job_id = job.id
     await session.execute(text("NOTIFY sync_jobs"))
     await session.commit()
+    return job_id
 
 
 def _doc_ref(doc: DocumentoFamilia | None, causa_id) -> DocumentoRef | None:

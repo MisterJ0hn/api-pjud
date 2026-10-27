@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from api.common.callback import CallbackMixin
+
 from api.civil.schemas import GeoReferenciaItem
 
 
@@ -19,7 +21,7 @@ class ConsultarPenalRequest(CausaPenalRequest):
     rut: str | None = None
 
 
-class SincronizarPenalRequest(CausaPenalRequest):
+class SincronizarPenalRequest(CallbackMixin, CausaPenalRequest):
     """Request de sincronizar_penal. Admite sincronizacion PUBLICA (sin credenciales) o
     PRIVADA si trae `rut` + `clave` + `metodo_login` (1 = Clave Poder Judicial, 2 =
     Clave Unica). `corte` y `tribunal` solo forman parte de la clave de la causa en el
@@ -33,6 +35,8 @@ class SincronizarPenalRequest(CausaPenalRequest):
 class SincronizarResponse(BaseModel):
     exito: bool = True
     code: int = 200
+    # Id de la sincronizacion: es el que llega en el callback_url (si se pidio).
+    job_id: int | None = None
 
 
 class CuadernoPenalItem(BaseModel):

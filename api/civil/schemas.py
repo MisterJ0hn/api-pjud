@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from api.common.callback import CallbackMixin
+
 
 class CausaRequest(BaseModel):
     corte: int
@@ -17,7 +19,7 @@ class ConsultarCausaRequest(CausaRequest):
     rut: str | None = None
 
 
-class SincronizarCivilRequest(CausaRequest):
+class SincronizarCivilRequest(CallbackMixin, CausaRequest):
     """Request de sincronizar_civil. Si trae `rut` + `clave` + `metodo_login`, la causa
     se sincroniza en modo privado (con login en la Oficina Judicial Virtual) en vez de
     la Consulta Unificada publica. `corte` y `tribunal` se siguen enviando: para causas
@@ -34,6 +36,8 @@ class SincronizarCivilRequest(CausaRequest):
 class SincronizarResponse(BaseModel):
     exito: bool = True
     code: int = 200
+    # Id de la sincronizacion: es el que llega en el callback_url (si se pidio).
+    job_id: int | None = None
 
 
 class DocumentoRef(BaseModel):

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from api.db.base import Base
 
 ESTADOS_JOB = ("pendiente", "en_progreso", "completo", "error")
+ESTADOS_CALLBACK = ("pendiente", "entregado", "fallido")
 
 
 class SyncJob(Base):
@@ -50,12 +51,25 @@ class SyncJob(Base):
     clave_cifrada: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     metodo_login: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
+    # Callback opcional del cliente: al llegar el job a un estado terminal el worker le hace
+    # POST (ver worker/callback.py). `callback_estado`: NULL = sin callback; "pendiente" =
+    # falta entregar (o reintentar); "entregado" / "fallido" = terminal. Se conserva en la fila
+    # (no en memoria) para retomar los reintentos si el worker se reinicia.
+    callback_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    callback_estado: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    callback_intentos: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    callback_proximo_intento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    callback_mensaje_error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+
     encolado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     iniciado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finalizado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint(f"estado IN {ESTADOS_JOB}", name="ck_sync_job_estado"),
+        CheckConstraint(
+            f"callback_estado IS NULL OR callback_estado IN {ESTADOS_CALLBACK}", name="ck_sync_job_callback_estado"
+        ),
         CheckConstraint(
             "(CASE WHEN causa_id IS NOT NULL THEN 1 ELSE 0 END) "
             "+ (CASE WHEN causa_familia_id IS NOT NULL THEN 1 ELSE 0 END) "

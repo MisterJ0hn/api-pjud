@@ -21,6 +21,7 @@ from api.db.models.laboral import (
     NotificacionLaboral,
     TextoDemandaLaboral,
 )
+from api.common.callback import marcar_completo_omitido
 from api.db.models.sync_job import SyncJob
 from api.laboral.schemas import (
     AudioItem,
@@ -125,19 +126,27 @@ async def encolar_sync_job(
     rut_cifrado: str | None = None,
     clave_cifrada: str | None = None,
     metodo_login: int | None = None,
-) -> None:
-    session.add(
-        SyncJob(
-            causa_laboral_id=causa_laboral_id,
-            estado="pendiente",
-            rut_cifrado=rut_cifrado,
-            clave_cifrada=clave_cifrada,
-            metodo_login=metodo_login,
-        )
+    callback_url: str | None = None,
+    omitida: bool = False,
+) -> int:
+    """Encola el job y devuelve su id. `omitida=True` es la sincronizacion que no hace falta
+    (causa al dia): el job nace terminado y solo sirve para entregar el callback."""
+    job = SyncJob(
+        causa_laboral_id=causa_laboral_id,
+        estado="pendiente",
+        rut_cifrado=rut_cifrado,
+        clave_cifrada=clave_cifrada,
+        metodo_login=metodo_login,
+        callback_url=callback_url,
     )
+    if omitida:
+        marcar_completo_omitido(job)
+    session.add(job)
     await session.commit()
+    job_id = job.id
     await session.execute(text("NOTIFY sync_jobs"))
     await session.commit()
+    return job_id
 
 
 def _doc_ref(doc: DocumentoLaboral | None, causa_id) -> DocumentoRef | None:

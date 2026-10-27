@@ -1,9 +1,11 @@
 from pydantic import BaseModel, Field
 
+from api.common.callback import CallbackMixin
+
 from api.civil.schemas import CausaRequest, GeoReferenciaItem
 
 
-class SincronizarCobranzaRequest(CausaRequest):
+class SincronizarCobranzaRequest(CallbackMixin, CausaRequest):
     """Request de sincronizar_cobranza. Igual que Laboral/Civil: admite sincronizacion
     PUBLICA (sin credenciales) o PRIVADA (con login en la Oficina Judicial Virtual) si
     trae `rut` + `clave` + `metodo_login`. `corte` y `tribunal` se siguen enviando: para
@@ -21,6 +23,8 @@ class SincronizarCobranzaRequest(CausaRequest):
 class SincronizarResponse(BaseModel):
     exito: bool = True
     code: int = 200
+    # Id de la sincronizacion: es el que llega en el callback_url (si se pidio).
+    job_id: int | None = None
 
 
 class DocumentoRef(BaseModel):
