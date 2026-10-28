@@ -1281,7 +1281,34 @@ class PjudSessionPrivada(_PjudModalScraper):
         await page.wait_for_selector("#segunda-clave-access.in", state="visible", timeout=15000)
         await page.locator("#segunda-clave-access input[type='text']:visible").first.fill(self._rut_sin_dv)
         await page.locator("#segunda-clave-access input[type='password']:visible").first.fill(self._clave)
-        await page.click("#btnSegundaClaveIngresar")
+        # El sitio a veces superpone el aviso `#no-disponible` sobre el modal de login y
+        # bloquea el click (Playwright reintenta 30 s con "intercepts pointer events").
+        await self._cerrar_aviso_no_disponible()
+        try:
+            await page.click("#btnSegundaClaveIngresar", timeout=8000)
+        except Exception:
+            logger.warning("Click de login bloqueado por un modal; se fuerza via JS")
+            await page.evaluate("document.getElementById('btnSegundaClaveIngresar').click()")
+
+    async def _cerrar_aviso_no_disponible(self) -> None:
+        """Cierra el modal `#no-disponible` (aviso del sitio) si esta abierto."""
+        try:
+            await self._page.evaluate(
+                """() => {
+                    const m = document.getElementById('no-disponible');
+                    if (!m) return;
+                    const c = m.querySelector('.close, [data-dismiss="modal"]');
+                    if (c) c.click();
+                    m.classList.remove('in');
+                    m.style.display = 'none';
+                    document.querySelectorAll('.modal-backdrop').forEach(b => {
+                        if (!document.querySelector('#segunda-clave-access.in')) b.remove();
+                    });
+                }"""
+            )
+            await self._page.wait_for_timeout(300)
+        except Exception:
+            pass
 
     async def _login_clave_unica(self) -> None:
         """Clave Unica: el enlace dispara AutenticaCUnica() y redirige a
