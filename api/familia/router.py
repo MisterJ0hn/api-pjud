@@ -59,7 +59,7 @@ async def sincronizar_familia(
             # La causa esta al dia: con callback no se rechaza, se avisa exito=true por el callback.
             if body.callback_url:
                 job_id = await encolar_sync_job(session, causa.id, callback_url=body.callback_url, omitida=True)
-                return SincronizarResponse(job_id=job_id)
+                return SincronizarResponse(job_id=str(job_id))
             reintentar_en = causa.fecha_ultima_sincronizacion + umbral
             raise ConflictoSincronizacionError(
                 motivo="intervalo_minimo",
@@ -98,7 +98,7 @@ async def sincronizar_familia(
         metodo_login=metodo_login,
         callback_url=body.callback_url,
     )
-    return SincronizarResponse(job_id=job_id)
+    return SincronizarResponse(job_id=str(job_id))
 
 
 @router.post("/consultar_familia", response_model=ConsultarFamiliaResponse)

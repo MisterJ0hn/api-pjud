@@ -24,7 +24,7 @@ TIMEOUT_S = 10
 
 
 def _payload(job_id: int, exito: bool, mensaje_error: str | None) -> dict:
-    payload = {"job_id": job_id, "exito": exito}
+    payload = {"job_id": str(job_id), "exito": exito}
     if not exito:
         payload["mensaje_error"] = mensaje_error
     return payload

@@ -24,7 +24,7 @@ class SincronizarResponse(BaseModel):
     exito: bool = True
     code: int = 200
     # Id de la sincronizacion: es el que llega en el callback_url (si se pidio).
-    job_id: int | None = None
+    job_id: str | None = None
 
 
 class DocumentoRef(BaseModel):
