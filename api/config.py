@@ -24,6 +24,10 @@ class Settings(BaseSettings):
 
     playwright_headless: bool = False
 
+    # Solo desarrollo: permite que `callback_url` apunte a localhost / IPs privadas (cliente
+    # en el mismo VPS o red interna). En produccion debe quedar en False (proteccion SSRF).
+    callback_permitir_redes_privadas: bool = False
+
     # Clave Fernet (urlsafe base64, 32 bytes) para cifrar las credenciales de PJUD
     # (RUT + clave) mientras esperan en la fila sync_job a que el worker las use.
     # Generar con: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

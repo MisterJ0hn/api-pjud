@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
+from api.config import settings
+
 MAX_LARGO_URL = 2000
 
 
@@ -27,6 +29,8 @@ def validar_url_callback(valor: str) -> str:
     host = partes.hostname
     if not host or partes.username or partes.password:
         raise ValueError("callback_url invalida")
+    if settings.callback_permitir_redes_privadas:
+        return valor.strip()
     if host == "localhost" or host.endswith(".localhost"):
         raise ValueError("callback_url no puede apuntar a localhost")
     try:
@@ -40,6 +44,8 @@ def validar_url_callback(valor: str) -> str:
 
 async def host_es_publico(host: str, puerto: int) -> bool:
     """True si TODAS las IPs a las que resuelve `host` son publicas."""
+    if settings.callback_permitir_redes_privadas:
+        return True
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(host, puerto, type=socket.SOCK_STREAM)
     except OSError:

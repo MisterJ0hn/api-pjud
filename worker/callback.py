@@ -31,18 +31,32 @@ def _payload(job_id: int, exito: bool, mensaje_error: str | None) -> dict:
 
 
 async def _enviar(url: str, payload: dict) -> bool:
-    """True solo si el cliente responde 2xx con `{"exito": true}`."""
+    """True solo si el cliente responde 2xx con `{"exito": true}`. Cada intento deja una
+    linea en el log con el motivo, para poder diagnosticar callbacks que no llegan."""
     partes = urlsplit(url)
+    job_id = payload.get("job_id")
     if not await host_es_publico(partes.hostname or "", partes.port or 443):
-        logger.warning("Callback a %s omitido: el host no resuelve a una IP publica", partes.hostname)
+        logger.warning(
+            "Callback job %s a %s NO enviado: el host no resuelve a una IP publica "
+            "(en desarrollo: CALLBACK_PERMITIR_REDES_PRIVADAS=true)",
+            job_id, partes.hostname,
+        )
         return False
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=False) as client:
             resp = await client.post(url, json=payload)
-        return resp.is_success and resp.json().get("exito") is True
-    except (httpx.HTTPError, ValueError, AttributeError) as exc:
-        logger.info("Callback a %s fallo: %s", partes.hostname, exc)
+    except httpx.HTTPError as exc:
+        logger.warning("Callback job %s a %s fallo: %s: %s", job_id, url, type(exc).__name__, exc)
         return False
+    try:
+        confirmado = resp.is_success and resp.json().get("exito") is True
+    except (ValueError, AttributeError):
+        confirmado = False
+    logger.info(
+        "Callback job %s a %s -> HTTP %s, %s", job_id, url, resp.status_code,
+        "confirmado" if confirmado else f"sin confirmar (respuesta: {resp.text[:200]!r})",
+    )
+    return confirmado
 
 
 async def _procesar_siguiente() -> bool:
