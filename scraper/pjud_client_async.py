@@ -69,8 +69,9 @@ TIMEOUT_DETALLE_PRIVADA_MS = 120_000
 def _normalizar_tribunal(nombre: str | None) -> str:
     """Normaliza el nombre de un tribunal para comparar ('18º Juzgado Civil de Santiago'
     del <select> vs. el de la cabecera del modal): minusculas, 'º'->'°', espacios
-    colapsados."""
-    return re.sub(r"\s+", " ", (nombre or "").lower().replace("º", "°")).strip()
+    colapsados y sin punto final (el <select> de Penal trae 'Juzgado De Garantía De San
+    Antonio.' y la cabecera del modal 'Juzgado de Garantía de San Antonio')."""
+    return re.sub(r"\s+", " ", (nombre or "").lower().replace("º", "°")).strip().rstrip(". ")
 
 
 # Selecciona la fila de la causa en la tabla de resultados por RIT. La Consulta Unificada
@@ -79,7 +80,7 @@ def _normalizar_tribunal(nombre: str | None) -> str:
 # primera. La ultima columna de la tabla es "Tribunal".
 JS_SELECCIONAR_FILA_RIT = """(args) => {
     const {objetivo, tribunal, sufijo} = args;
-    const norm = s => (s || '').toLowerCase().replace(/\\u00ba/g, '\\u00b0').replace(/\\s+/g, ' ').trim();
+    const norm = s => (s || '').toLowerCase().replace(/\\u00ba/g, '\\u00b0').replace(/\\s+/g, ' ').trim().replace(/[. ]+$/, '');
     // Columna "Tribunal" por header (Penal la trae en 2a posicion y termina en "Estado
     // Causa"); si no hay header "Tribunal", la ultima columna (civil/laboral/cobranza).
     const tribCol = tr => {
