@@ -1394,7 +1394,9 @@ class PjudSessionPrivada(_PjudModalScraper):
         await self._activar_filtros()
 
         try:
-            if self.TIPO_POR_LABEL:
+            if not self.CAMPO_TIPO:
+                pass  # Apelaciones: Mis Causas no filtra por libro
+            elif self.TIPO_POR_LABEL:
                 await page.select_option(f"#{self.CAMPO_TIPO}", label=tipo)
             else:
                 await page.select_option(f"#{self.CAMPO_TIPO}", value=tipo)
@@ -2059,19 +2061,21 @@ class PjudSessionApelacionesAsync(_ExtraccionApelaciones, PjudSessionAsync):
 class PjudSessionApelacionesPrivada(_ExtraccionApelaciones, PjudSessionPrivada):
     """Pestana "Apelaciones" de Mis Causas.
 
-    NO CONFIRMADO EN VIVO (sin credenciales para validarlo): ids extrapolados de Civil/Penal
-    ("MisCau" + sufijo "Ape"). El modal de detalle es el mismo que el de la Consulta
+    Ids tomados del HTML real de Mis Causas (ejemplos/causa familia): pestana
+    `corteApelacionesTab` (pane tab2), sin select de libro (`tipCausaMisCauApe` es "Causas
+    Propias") y estado en `estadoRecursoMisCauApe`. La fila de resultados (se llena por AJAX)
+    NO esta confirmada. El modal de detalle es el mismo que el de la Consulta
     Unificada, asi que la extraccion es la del mixin. Revisar los ids contra una sesion real
     antes de confiar en sincronizaciones privadas de Apelaciones. `tipo` = libro."""
 
     NOMBRE_COMPETENCIA = "Apelaciones"
-    TAB_COMPETENCIA = "apelacionesTab"
+    TAB_COMPETENCIA = "corteApelacionesTab"
     PANE_COMPETENCIA = "tab2"
     CHECK_FILTROS = "filtroMisCauApe"
-    CAMPO_TIPO = "tipoMisCauApe"
+    CAMPO_TIPO = None  # no hay select de libro en Mis Causas
     CAMPO_ROL = "rolMisCauApe"
     CAMPO_ANIO = "anhoMisCauApe"
-    CAMPO_ESTADO = "estadoCausaMisCauApe"
+    CAMPO_ESTADO = "estadoRecursoMisCauApe"
     BTN_BUSCAR = "btnConsultaMisCauApe"
     MODAL_DETALLE = "modalDetalleMisCauApelaciones"
     TIPO_POR_LABEL = True
