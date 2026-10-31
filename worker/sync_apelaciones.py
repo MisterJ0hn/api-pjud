@@ -18,7 +18,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.apelaciones.cortes import clave_texto
+from api.apelaciones.cortes import CORTES, clave_texto
 from api.db.models.apelaciones import (
     AnexoCausaApelaciones,
     CausaApelaciones,
@@ -512,6 +512,8 @@ async def sincronizar_causa_apelaciones(
             await progreso(texto)
 
     if privada:
+        # Mis Causas no filtra por corte: la sesion la usa para elegir la fila correcta.
+        sesion_pjud.corte_nombre = CORTES.get(causa.corte)
         resultado = await sesion_pjud.buscar_y_extraer_privada(causa.libro, causa.rol, causa.anio, progreso=progreso)
     else:
         resultado = await sesion_pjud.buscar_y_extraer_apelaciones(

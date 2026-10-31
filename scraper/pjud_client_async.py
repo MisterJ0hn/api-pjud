@@ -1423,6 +1423,10 @@ class PjudSessionPrivada(_PjudModalScraper):
         await page.click(f"#{self.BTN_BUSCAR}")
         await page.wait_for_timeout(3500)
 
+    # Apelaciones: la celda "Rol" de Mis Causas es solo "261-2026" (sin libro), asi que se
+    # compara la celda completa en vez de buscar el texto dentro de ella.
+    MATCH_EXACTO_CELDA = False
+
     async def _libros_ambiguos(self, tipo: str, rol, anio) -> list[str]:
         """Libros distintos que coinciden con rol/anio cuando no se indico `tipo`; vacio si
         no aplica. Solo lo usa Apelaciones (una fila por libro)."""
@@ -1452,17 +1456,23 @@ class PjudSessionPrivada(_PjudModalScraper):
 
             objetivo = self._texto_fila_privada(tipo, rol, anio)
             abierta = await page.evaluate(
-                """([objetivo, paneId]) => {
+                """([objetivo, paneId, exacto, corte]) => {
                     const norm = s => (s || '').replace(/\\s+/g, '').toUpperCase();
-                    const cell = Array.from(document.querySelectorAll('#' + paneId + ' td'))
-                        .find(td => norm(td.textContent).includes(norm(objetivo)));
+                    const obj = norm(objetivo);
+                    const celdas = Array.from(document.querySelectorAll('#' + paneId + ' td'))
+                        .filter(td => exacto ? norm(td.textContent) === obj : norm(td.textContent).includes(obj));
+                    // Con varias coincidencias se prefiere la fila de la corte pedida (col. 3).
+                    const deCorte = corte
+                        ? celdas.filter(td => td.parentElement.cells[2] && norm(td.parentElement.cells[2].textContent) === norm(corte))
+                        : [];
+                    const cell = (deCorte.length ? deCorte : celdas)[0];
                     if (!cell) return null;
                     const row = cell.closest('tr');
                     const clickable = row.querySelector('a,button,i,img,span') || row.querySelector('td');
                     clickable.click();
                     return true;
                 }""",
-                [objetivo, self.PANE_COMPETENCIA],
+                [objetivo, self.PANE_COMPETENCIA, self.MATCH_EXACTO_CELDA, getattr(self, "corte_nombre", None)],
             )
             if abierta is None:
                 logger.info("Causa privada %s no encontrada en Mis Causas", objetivo)
@@ -2080,23 +2090,32 @@ class PjudSessionApelacionesPrivada(_ExtraccionApelaciones, PjudSessionPrivada):
     MODAL_DETALLE = "modalDetalleMisCauApelaciones"
     TIPO_POR_LABEL = True
 
+    MATCH_EXACTO_CELDA = True
+    corte_nombre: str | None = None  # lo fija el sincronizador; desambigua por la columna "Corte"
+
     def _texto_fila_privada(self, tipo: str, rol, anio) -> str:
-        return f"{tipo}-{rol}-{anio}" if tipo else f"-{rol}-{anio}"
+        # Confirmado con ejemplos/causa apelaciones/busqueda.html: columnas lupa / Rol ("261-2026",
+        # sin libro) / Corte / Caratulado / Fecha Ingreso / Estado Causa / Fecha Ubicacion /
+        # Ubicacion / Institucion. El libro no aparece en la fila, solo en el detalle.
+        return f"{rol}-{anio}"
 
     async def _libros_ambiguos(self, tipo: str, rol, anio) -> list[str]:
+        """Sin `libro`, mas de una fila con el mismo rol/anio (en la corte pedida) no se puede
+        distinguir desde la lista: se informa como ambiguo con el caratulado de cada una."""
         if tipo:
             return []
-        textos = await self._page.evaluate(
-            """(paneId) => Array.from(document.querySelectorAll('#' + paneId + ' td'))
-                .map(td => td.textContent.trim())""",
-            self.PANE_COMPETENCIA,
+        from api.apelaciones.cortes import clave_texto
+
+        filas = await self._page.evaluate(
+            """([paneId, objetivo]) => {
+                const norm = s => (s || '').replace(/\\s+/g, '').toUpperCase();
+                return Array.from(document.querySelectorAll('#' + paneId + ' tr'))
+                    .filter(tr => tr.cells.length > 7 && norm(tr.cells[1].textContent) === norm(objetivo))
+                    .map(tr => ({corte: tr.cells[2].textContent.trim(), caratulado: tr.cells[3].textContent.trim()}));
+            }""",
+            [self.PANE_COMPETENCIA, self._texto_fila_privada("", rol, anio)],
         )
-        patron = re.compile(r"^(.*?)\s*-\s*(\d+)\s*-\s*(\d+)$")
-        libros: list[str] = []
-        for t in textos:
-            m = patron.match(t)
-            if m and int(m.group(2)) == int(rol) and int(m.group(3)) == int(anio):
-                libro = m.group(1).strip()
-                if libro not in libros:
-                    libros.append(libro)
-        return libros if len(libros) > 1 else []
+        if self.corte_nombre:
+            de_corte = [f for f in filas if clave_texto(f["corte"]) == clave_texto(self.corte_nombre)]
+            filas = de_corte or filas
+        return [f"{f['caratulado']} ({f['corte']})" for f in filas] if len(filas) > 1 else []
