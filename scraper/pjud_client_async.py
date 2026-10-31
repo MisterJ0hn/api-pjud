@@ -970,8 +970,22 @@ class PjudSessionAsync(_PjudModalScraper):
             await self._playwright.stop()
 
     async def _goto_consulta_unificada(self) -> None:
-        await self._page.goto(BASE_URL, wait_until="networkidle")
+        await self._cargar_consulta_unificada()
         await self._ensure_rit_tab()
+
+    async def _cargar_consulta_unificada(self) -> None:
+        # `networkidle` no se alcanza si el sitio mantiene requests abiertos (reCAPTCHA, Google
+        # Maps): el goto moria por timeout y tumbaba el worker. Basta con el DOM; el formulario
+        # se espera despues con `#competencia`.
+        for intento in range(3):
+            try:
+                await self._page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60000)
+                return
+            except Exception:
+                if intento == 2:
+                    raise
+                logger.warning("Timeout cargando la Consulta Unificada (intento %s/3); se reintenta", intento + 1)
+                await self._page.wait_for_timeout(3000)
 
     async def _ensure_rit_tab(self) -> None:
         page = self._page
@@ -982,10 +996,10 @@ class PjudSessionAsync(_PjudModalScraper):
             # para fallar. En ese caso se recarga el formulario antes de seguir.
             if await page.query_selector('a[href="#busRit"]') is None:
                 logger.warning("Consulta Unificada no cargada (url=%s); se recarga", page.url)
-                await page.goto(BASE_URL, wait_until="networkidle")
+                await self._cargar_consulta_unificada()
             if not await page.is_visible("#competencia"):
                 await page.click('a[href="#busRit"]', timeout=15000)
-        await page.wait_for_selector("#competencia", state="visible")
+        await page.wait_for_selector("#competencia", state="visible", timeout=60000)
 
     async def _cerrar_modales_abiertos(self) -> None:
         """Cierra cualquier modal que haya quedado abierto de una busqueda anterior
