@@ -1421,6 +1421,11 @@ class PjudSessionPrivada(_PjudModalScraper):
         await page.click(f"#{self.BTN_BUSCAR}")
         await page.wait_for_timeout(3500)
 
+    async def _libros_ambiguos(self, tipo: str, rol, anio) -> list[str]:
+        """Libros distintos que coinciden con rol/anio cuando no se indico `tipo`; vacio si
+        no aplica. Solo lo usa Apelaciones (una fila por libro)."""
+        return []
+
     async def buscar_y_extraer_privada(
         self, tipo: str, rol, anio, progreso=None, tribunal_nombre: str | None = None
     ) -> dict:
@@ -1437,6 +1442,11 @@ class PjudSessionPrivada(_PjudModalScraper):
         try:
             await self._reportar("Buscando la causa en Mis Causas")
             await self._filtrar_mis_causas(tipo, rol, anio)
+
+            libros = await self._libros_ambiguos(tipo, rol, anio)
+            if libros:
+                logger.info("Causa privada %s-%s: varios libros en Mis Causas %s", rol, anio, libros)
+                return {"encontrada": False, "libros": libros}
 
             objetivo = self._texto_fila_privada(tipo, rol, anio)
             abierta = await page.evaluate(
@@ -2068,3 +2078,21 @@ class PjudSessionApelacionesPrivada(_ExtraccionApelaciones, PjudSessionPrivada):
 
     def _texto_fila_privada(self, tipo: str, rol, anio) -> str:
         return f"{tipo}-{rol}-{anio}" if tipo else f"-{rol}-{anio}"
+
+    async def _libros_ambiguos(self, tipo: str, rol, anio) -> list[str]:
+        if tipo:
+            return []
+        textos = await self._page.evaluate(
+            """(paneId) => Array.from(document.querySelectorAll('#' + paneId + ' td'))
+                .map(td => td.textContent.trim())""",
+            self.PANE_COMPETENCIA,
+        )
+        patron = re.compile(r"^(.*?)\s*-\s*(\d+)\s*-\s*(\d+)$")
+        libros: list[str] = []
+        for t in textos:
+            m = patron.match(t)
+            if m and int(m.group(2)) == int(rol) and int(m.group(3)) == int(anio):
+                libro = m.group(1).strip()
+                if libro not in libros:
+                    libros.append(libro)
+        return libros if len(libros) > 1 else []

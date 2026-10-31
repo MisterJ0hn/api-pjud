@@ -218,10 +218,15 @@ async def _sincronizar_publica_luego_privada(
             finally:
                 await sesion_publica.cerrar()
         return VISIBILIDAD_PUBLICA
-    except CausaNoEncontrada:
+    except (CausaNoEncontrada, LibroAmbiguoError) as exc:
         if not privada:
             raise
-        logger.info("Causa %s no encontrada en la Consulta Unificada; se busca en Mis Causas", causa.id)
+        # Libro ambiguo: la Consulta Unificada devuelve una fila por libro, pero Mis Causas
+        # solo lista las causas del usuario, asi que ahi puede resolverse.
+        logger.info(
+            "Causa %s no resuelta en la Consulta Unificada (%s); se busca en Mis Causas",
+            causa.id, type(exc).__name__,
+        )
 
     clase_privada = SESIONES_PRIVADAS[competencia]
     rut = descifrar(job.rut_cifrado)
