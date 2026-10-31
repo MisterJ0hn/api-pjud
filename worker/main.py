@@ -220,6 +220,11 @@ async def _sincronizar_publica_luego_privada(
         return VISIBILIDAD_PUBLICA
     except (CausaNoEncontrada, LibroAmbiguoError) as exc:
         if not privada:
+            if isinstance(exc, LibroAmbiguoError):
+                raise LibroAmbiguoError(
+                    f"{exc} La solicitud no trae credenciales (rut/clave/metodo_login), "
+                    "asi que no se pudo resolver buscando en Mis Causas."
+                ) from exc
             raise
         # Libro ambiguo: la Consulta Unificada devuelve una fila por libro, pero Mis Causas
         # solo lista las causas del usuario, asi que ahi puede resolverse.
@@ -259,6 +264,7 @@ async def _procesar_job(sesion_pjud: PjudSessionAsync, job_id: int) -> None:
         etiqueta = causa.rol_formateado if competencia == "civil" else causa.rit
 
         privada = job.rut_cifrado is not None
+        logger.info("Job %s (%s) iniciado; credenciales=%s", job.id, etiqueta, "si" if privada else "no")
         # RUT del usuario que pidio el sync (ya normalizado); se lee antes de que las
         # credenciales se limpien al terminar el job.
         rut_usuario = descifrar(job.rut_cifrado) if privada else None
